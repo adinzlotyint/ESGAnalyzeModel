@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.ipynb_checkpoints
+
+# Virtual environment
+.env/
+.venv/
+env/
+venv/
+
+# PyTorch / Huggingface
+*.pth
+*.pt
+*.ckpt
+*.bin
+*.h5
+*.log
+*.onnx
+
+# HuggingFace datasets/cache
+.cache/
+**/cache/
+~/.cache/huggingface/
+
+# DVC / wandb / TensorBoard
+.wandb/
+*.dvc
+*.tfevents.*
+
+# Output folders
+outputs/
+runs/
+logs/
+
+# VS Code / PyCharm
+.vscode/
+.idea/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# YAML / config backups
+*.bak
