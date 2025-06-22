@@ -44,3 +44,6 @@ Thumbs.db
 
 # YAML / config backups
 *.bak
+
+# Data
+data/*
