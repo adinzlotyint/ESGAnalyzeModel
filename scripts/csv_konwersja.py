@@ -1,5 +1,5 @@
-input_file = "data/rule_based_scores.csv"
-output_file = "data/rule_based_scores_po_konwersji.csv"
+input_file = "data/expert_scores_uproszczone.csv"
+output_file = "data/expert_scores_uproszczone_po_konwersji.csv"
 
 with open(input_file, "r", encoding="utf-8") as f:
     content = f.read()
