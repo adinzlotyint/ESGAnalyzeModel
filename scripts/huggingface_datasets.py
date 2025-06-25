@@ -2,7 +2,7 @@ from datasets import load_dataset, DatasetDict
 import os
 
 # Ścieżka do JSONL
-data_path = 'processed/merged_dataset.jsonl'
+data_path = 'data/processed/dane_do_uczenia_int.jsonl'
 
 # Wczytanie jako dataset
 dataset = load_dataset('json', data_files=data_path, split='train')
@@ -15,7 +15,7 @@ dataset_dict = DatasetDict({
 })
 
 # Zapis do katalogu
-output_dir = 'processed/hf_dataset'
+output_dir = 'data/processed/hf_dataset'
 dataset_dict.save_to_disk(output_dir)
 
 print(f'Dataset zapisany do {output_dir}')
