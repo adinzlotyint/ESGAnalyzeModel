@@ -1,0 +1,7 @@
+{
+  "model_name": "sdadas/polish-longformer-base-4096",
+  "num_labels": 7,
+  "problem_type": "multi_label_classification",
+  "hf_dataset": "data/processed/hf_dataset",
+  "tokenizer_output_path": "data/processed/tokenized_dataset"
+}
