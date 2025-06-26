@@ -3,5 +3,21 @@
   "num_labels": 7,
   "problem_type": "multi_label_classification",
   "hf_dataset": "data/processed/hf_dataset",
-  "tokenizer_output_path": "data/processed/tokenized_dataset"
+  "tokenizer_output_path": "data/processed/tokenized_dataset",
+  "model_output_path": "models",
+  "training_args": {
+    "output_dir": "models/longformer-esg",
+    "eval_strategy": "epoch",
+    "save_strategy": "epoch",
+    "logging_strategy": "epoch",
+    "learning_rate": 0.00002,
+    "per_device_train_batch_size": 1,
+    "per_device_eval_batch_size": 1,
+    "num_train_epochs": 3,
+    "weight_decay": 0.01,
+    "load_best_model_at_end": true,
+    "metric_for_best_model": "eval_loss",
+    "save_total_limit": 1,
+    "report_to": "none"
+  }
 }
