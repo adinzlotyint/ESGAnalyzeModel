@@ -116,13 +116,13 @@ def main():
     config = load_config()
     
     raw_csv_path = config["raw_csv_path"]
-    raw_jsonl_path = config["raw_jsonl_path", "data/processed/teksty_raportow.jsonl"]
+    raw_jsonl_path = config["raw_jsonl_path"]
     
     converted_csv_path = config["converted_csv_path"]
     cleaned_jsonl_path = config["cleaned_jsonl_path"]
     merged_data_path = config["merged_jsonl_path"]
     
-    final_output_path = Path(config["final_dataset"])
+    final_output_path = Path(config["final_jsonl"])
     
     num_labels = config["num_labels"]
     
@@ -146,7 +146,7 @@ def main():
     
     print(f"🎉 Proces zakończony pomyślnie!")
     print(f"📂 Zbiór danych gotowy w: {final_output_path}")
-    print(f"💡 Możesz teraz uruchomić huggingface_datasets.py, aby stworzyć zbiór HuggingFace")
+    print(f"💡 Możesz teraz uruchomić hf_create_dataset.py, aby stworzyć zbiór HuggingFace")
 
 if __name__ == "__main__":
     main()

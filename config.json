@@ -3,15 +3,15 @@
   "num_labels": 7,
   "problem_type": "multi_label_classification",
 
-  "raw_csv_path": "data/processed/expert_scores_uproszczone.csv",
-  "raw_jsonl_path": "data/processed/teksty_raportow.jsonl",
+  "raw_csv_path": "data/expert_scores_for_NLP_simplified.csv",
+  "raw_jsonl_path": "data/reports_texts_original.jsonl",
 
   "converted_csv_path": "data/processed/expert_scores_uproszczone_po_konwersji.csv",
   "cleaned_jsonl_path": "data/processed/teksty_raportow_wyczyszczone.jsonl",
   "merged_jsonl_path": "data/processed/dane_do_uczenia.jsonl",
+  "final_jsonl": "data/processed/dane_do_uczenia_final.jsonl",
 
   "hf_dataset": "data/processed/hf_dataset",
-  "final_dataset": "data/processed/dane_do_uczenia_final.jsonl",
   "tokenizer_output_path": "data/processed/tokenized_dataset",
   "model_output_path": "models",
 
