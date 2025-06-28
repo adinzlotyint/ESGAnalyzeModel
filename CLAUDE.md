@@ -30,33 +30,42 @@ venv\Scripts\activate     # Windows
 pip install -r requirements.txt
 ```
 
-### Data Processing (Execute in order)
+### Interactive Pipeline (Recommended)
 ```bash
-# 1. Clean and convert CSV format (Polish → US format)
-python scripts/csv_konwersja.py
+# Launch interactive menu
+python main.py
 
-# 2. Clean text content (remove artifacts)
-python scripts/jsonl_tekst_czyszczenie.py
-
-# 3. Merge text reports with expert scores
-python scripts/csv_jsonl_concat.py
-
-# 4. Convert float labels to integers for classification
-python scripts/float_to_int.py
-
-# 5. Create HuggingFace dataset with train/validation split
-python scripts/huggingface_datasets.py
+# The menu provides options 1-9:
+# 1. Full data pipeline (conversion → dataset → download → tokenize)
+# 2-5. Individual data processing steps
+# 6. Training via pipeline (basic output)
+# 7. Direct training (full progress bars)
+# 8. Clean all files and run full pipeline
+# 9. Show configuration
+# 0. Exit
 ```
 
-### Model Training Pipeline
+### Command Line Pipeline
 ```bash
-# 1. Download base model (Polish Longformer)
+# Full data pipeline (excludes training)
+python main.py
+
+# Specific steps
+python main.py --steps conversion dataset
+python main.py --steps train
+python main.py --force-clean
+
+# Direct training (with progress bars)
+python training/train_model.py
+```
+
+### Individual Scripts (Advanced)
+```bash
+# Data processing
+python scripts/conversion.py
+python training/hf_create_dataset.py
 python training/download_snapshot.py
-
-# 2. Tokenize dataset with chunking for long documents
 python training/tokenize_dataset.py
-
-# 3. Train the model
 python training/train_model.py
 ```
 
