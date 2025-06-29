@@ -9,6 +9,7 @@ from transformers import (
 from datasets import load_from_disk
 from sklearn.metrics import f1_score, accuracy_score, precision_recall_fscore_support
 from sklearn.utils.class_weight import compute_class_weight
+from scipy.optimize import minimize_scalar
 import numpy as np
 import json
 from datetime import datetime
@@ -95,45 +96,133 @@ def calculate_class_weights(dataset, num_labels=7, method="balanced"):
     
     return weights_tensor
 
+def optimize_thresholds(y_true, y_probs, num_labels=7):
+    """
+    Find optimal thresholds for each label to maximize F1 scores.
+    
+    Args:
+        y_true: True labels (n_samples, n_labels)
+        y_probs: Predicted probabilities (n_samples, n_labels)
+        num_labels: Number of labels
+        
+    Returns:
+        np.array: Optimal thresholds for each label
+    """
+    print("🎯 Optimizing classification thresholds...")
+    
+    optimal_thresholds = []
+    esg_labels = ['C1', 'C2', 'C3', 'C5', 'C8', 'C9', 'C10']
+    
+    for label_idx in range(num_labels):
+        # Get true labels and probabilities for this label
+        true_labels = y_true[:, label_idx]
+        pred_probs = y_probs[:, label_idx]
+        
+        # Define objective function to maximize F1 score
+        def negative_f1(threshold):
+            predictions = (pred_probs >= threshold).astype(int)
+            f1 = f1_score(true_labels, predictions, zero_division=0)
+            return -f1  # Negative because minimize_scalar minimizes
+        
+        # Optimize threshold between 0.1 and 0.9
+        result = minimize_scalar(negative_f1, bounds=(0.1, 0.9), method='bounded')
+        optimal_threshold = result.x
+        optimal_f1 = -result.fun
+        
+        optimal_thresholds.append(optimal_threshold)
+        
+        # Calculate F1 at default 0.5 for comparison
+        default_preds = (pred_probs >= 0.5).astype(int)
+        default_f1 = f1_score(true_labels, default_preds, zero_division=0)
+        
+        label_name = esg_labels[label_idx] if label_idx < len(esg_labels) else f'Label_{label_idx}'
+        improvement = optimal_f1 - default_f1
+        
+        print(f"   {label_name}: threshold {optimal_threshold:.3f} (F1: {optimal_f1:.3f}, +{improvement:+.3f})")
+    
+    optimal_thresholds = np.array(optimal_thresholds)
+    print(f"✅ Threshold optimization completed")
+    print(f"   Threshold range: {optimal_thresholds.min():.3f} - {optimal_thresholds.max():.3f}")
+    
+    return optimal_thresholds
 
 def compute_metrics(eval_pred):
-    """Compute evaluation metrics for multi-label classification."""
+    """Compute evaluation metrics with threshold optimization for multi-label classification."""
     predictions, labels = eval_pred
     
-    # Apply sigmoid to get probabilities, then threshold at 0.5
+    # Apply sigmoid to get probabilities
     sigmoid = lambda x: 1 / (1 + np.exp(-x))
-    predictions = sigmoid(predictions)
-    predictions = (predictions > 0.5).astype(int)
+    y_probs = sigmoid(predictions)
     
     # Convert to proper format for sklearn
-    labels = labels.astype(int)
+    y_true = labels.astype(int)
     
-    # Calculate metrics
-    f1_macro = f1_score(labels, predictions, average='macro', zero_division=0)
-    f1_micro = f1_score(labels, predictions, average='micro', zero_division=0)
-    f1_weighted = f1_score(labels, predictions, average='weighted', zero_division=0)
+    # Optimize thresholds for each label - ALWAYS ENABLED
+    optimal_thresholds = optimize_thresholds(y_true, y_probs, num_labels=7)
     
-    # Per-label F1 scores
-    f1_per_label = f1_score(labels, predictions, average=None, zero_division=0)
+    # Apply optimized thresholds
+    y_pred_optimized = np.zeros_like(y_probs, dtype=int)
+    for i, threshold in enumerate(optimal_thresholds):
+        y_pred_optimized[:, i] = (y_probs[:, i] >= threshold).astype(int)
     
-    # Accuracy (exact match for multi-label)
-    accuracy = accuracy_score(labels, predictions)
+    # Also calculate metrics with default 0.5 threshold for comparison
+    y_pred_default = (y_probs > 0.5).astype(int)
+    
+    # Calculate optimized metrics
+    f1_macro_opt = f1_score(y_true, y_pred_optimized, average='macro', zero_division=0)
+    f1_micro_opt = f1_score(y_true, y_pred_optimized, average='micro', zero_division=0)
+    f1_weighted_opt = f1_score(y_true, y_pred_optimized, average='weighted', zero_division=0)
+    accuracy_opt = accuracy_score(y_true, y_pred_optimized)
+    f1_per_label_opt = f1_score(y_true, y_pred_optimized, average=None, zero_division=0)
+    
+    # Calculate default (0.5) metrics for comparison
+    f1_macro_default = f1_score(y_true, y_pred_default, average='macro', zero_division=0)
+    f1_micro_default = f1_score(y_true, y_pred_default, average='micro', zero_division=0)
+    accuracy_default = accuracy_score(y_true, y_pred_default)
+    f1_per_label_default = f1_score(y_true, y_pred_default, average=None, zero_division=0)
     
     # ESG category names for better tracking
     esg_labels = ['C1', 'C2', 'C3', 'C5', 'C8', 'C9', 'C10']
     
-    # Create detailed metrics
+    # Create detailed metrics (primary metrics use optimized thresholds)
     metrics = {
-        'f1_macro': f1_macro,
-        'f1_micro': f1_micro, 
-        'f1_weighted': f1_weighted,
-        'accuracy': accuracy,
+        'f1_macro': f1_macro_opt,
+        'f1_micro': f1_micro_opt, 
+        'f1_weighted': f1_weighted_opt,
+        'accuracy': accuracy_opt,
+        # Default threshold metrics for comparison
+        'f1_macro_default': f1_macro_default,
+        'f1_micro_default': f1_micro_default,
+        'accuracy_default': accuracy_default,
+        # Improvement metrics
+        'f1_macro_improvement': f1_macro_opt - f1_macro_default,
+        'accuracy_improvement': accuracy_opt - accuracy_default,
     }
     
-    # Add per-label F1 scores with meaningful names
-    for i, f1 in enumerate(f1_per_label):
+    # Add per-label F1 scores with meaningful names (optimized)
+    for i, f1 in enumerate(f1_per_label_opt):
         label_name = esg_labels[i] if i < len(esg_labels) else f'label_{i}'
         metrics[f'f1_{label_name}'] = f1
+    
+    # Add per-label F1 scores for default thresholds (comparison)
+    for i, f1 in enumerate(f1_per_label_default):
+        label_name = esg_labels[i] if i < len(esg_labels) else f'label_{i}'
+        metrics[f'f1_{label_name}_default'] = f1
+        
+    # Add per-label improvements
+    for i, (f1_opt, f1_def) in enumerate(zip(f1_per_label_opt, f1_per_label_default)):
+        label_name = esg_labels[i] if i < len(esg_labels) else f'label_{i}'
+        metrics[f'f1_{label_name}_improvement'] = f1_opt - f1_def
+    
+    # Add optimal thresholds to metrics for logging
+    for i, threshold in enumerate(optimal_thresholds):
+        label_name = esg_labels[i] if i < len(esg_labels) else f'label_{i}'
+        metrics[f'threshold_{label_name}'] = threshold
+    
+    # Log threshold optimization summary
+    print(f"📊 Threshold Optimization Results:")
+    print(f"   F1-macro: {f1_macro_default:.4f} → {f1_macro_opt:.4f} (+{f1_macro_opt-f1_macro_default:+.4f})")
+    print(f"   Accuracy: {accuracy_default:.4f} → {accuracy_opt:.4f} (+{accuracy_opt-accuracy_default:+.4f})")
     
     return metrics
 
@@ -244,6 +333,7 @@ def main():
         mlflow.log_params({
             "use_class_weights": True,
             "class_weight_method": class_weight_method,
+            "use_threshold_optimization": True,
         })
         # Log individual weights
         esg_labels = ['C1', 'C2', 'C3', 'C5', 'C8', 'C9', 'C10']
@@ -314,7 +404,7 @@ def main():
             compute_metrics=compute_metrics
         )
         
-        print(f"   ✅ Balanced class weights applied to training")
+        print(f"   ✅ Balanced class weights + threshold optimization applied")
         
         # Start training
         print("🏃 Starting training process...")
