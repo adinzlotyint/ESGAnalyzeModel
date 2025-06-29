@@ -2,6 +2,7 @@
   "model_name": "sdadas/polish-longformer-base-4096",
   "num_labels": 7,
   "problem_type": "multi_label_classification",
+  "class_weight_method": "balanced",
 
   "raw_csv_path": "data/expert_scores_for_NLP_simplified.csv",
   "raw_jsonl_path": "data/reports_texts_original.jsonl",

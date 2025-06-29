@@ -8,6 +8,7 @@ from transformers import (
 )
 from datasets import load_from_disk
 from sklearn.metrics import f1_score, accuracy_score, precision_recall_fscore_support
+from sklearn.utils.class_weight import compute_class_weight
 import numpy as np
 import json
 from datetime import datetime
@@ -15,6 +16,8 @@ import os
 from pathlib import Path
 import mlflow
 import mlflow.transformers
+import torch
+import torch.nn as nn
 from typing import Dict, Any
 
 def load_config():
@@ -27,6 +30,71 @@ def load_config():
         
     with open(config_path, "r", encoding="utf-8") as file:
         return json.load(file)
+
+def calculate_class_weights(dataset, num_labels=7, method="balanced"):
+    """
+    Calculate class weights for multi-label imbalanced dataset.
+    
+    Args:
+        dataset: HuggingFace dataset with 'labels' column
+        num_labels: Number of labels (default: 7 for ESG)
+        method: "balanced", "sqrt", or "log" weighting method
+        
+    Returns:
+        torch.Tensor: Class weights for each label
+    """
+    print("📊 Calculating class weights for balanced training...")
+    
+    # Extract all labels
+    all_labels = np.array(dataset['labels'])
+    
+    # Calculate positive/negative frequencies for each label
+    class_weights = []
+    
+    for label_idx in range(num_labels):
+        # Get labels for this specific class
+        label_column = all_labels[:, label_idx]
+        
+        # Count positive and negative examples
+        pos_count = np.sum(label_column == 1)
+        neg_count = np.sum(label_column == 0)
+        total_count = len(label_column)
+        
+        # Calculate weight based on method
+        if method == "balanced":
+            # Standard balanced weighting: n_samples / (n_classes * n_samples_class)
+            pos_weight = total_count / (2 * pos_count) if pos_count > 0 else 1.0
+            
+        elif method == "sqrt":
+            # Square root of inverse frequency
+            pos_freq = pos_count / total_count
+            pos_weight = np.sqrt(1 / pos_freq) if pos_freq > 0 else 1.0
+            
+        elif method == "log":
+            # Logarithmic weighting  
+            pos_freq = pos_count / total_count
+            pos_weight = np.log(1 / pos_freq) if pos_freq > 0 else 1.0
+            
+        else:
+            pos_weight = 1.0
+        
+        # For multi-label, we primarily care about positive class weight
+        class_weights.append(pos_weight)
+        
+        # ESG label names for logging
+        esg_labels = ['C1', 'C2', 'C3', 'C5', 'C8', 'C9', 'C10']
+        label_name = esg_labels[label_idx] if label_idx < len(esg_labels) else f'Label_{label_idx}'
+        
+        print(f"   {label_name}: {pos_count}/{total_count} positive ({pos_count/total_count*100:.1f}%) -> weight: {pos_weight:.3f}")
+    
+    # Convert to tensor
+    weights_tensor = torch.FloatTensor(class_weights)
+    
+    print(f"✅ Class weights calculated using '{method}' method")
+    print(f"   Weights range: {weights_tensor.min():.3f} - {weights_tensor.max():.3f}")
+    
+    return weights_tensor
+
 
 def compute_metrics(eval_pred):
     """Compute evaluation metrics for multi-label classification."""
@@ -160,6 +228,29 @@ def main():
     num_labels = config.get("num_labels", 7)
     problem_type = config.get("problem_type", "multi_label_classification")
     
+    # Class weighting configuration - ALWAYS ENABLED
+    class_weight_method = config.get("class_weight_method", "balanced")
+    
+    # Calculate class weights
+    print(f"⚖️ Calculating balanced class weights with method: {class_weight_method}")
+    class_weights = calculate_class_weights(
+        dataset["train"], 
+        num_labels=num_labels, 
+        method=class_weight_method
+    )
+    
+    # Log class weights to MLflow
+    if mlflow.active_run():
+        mlflow.log_params({
+            "use_class_weights": True,
+            "class_weight_method": class_weight_method,
+        })
+        # Log individual weights
+        esg_labels = ['C1', 'C2', 'C3', 'C5', 'C8', 'C9', 'C10']
+        for i, weight in enumerate(class_weights):
+            label_name = esg_labels[i] if i < len(esg_labels) else f'label_{i}'
+            mlflow.log_param(f"class_weight_{label_name}", float(weight))
+    
     print(f"⚙️  Model configuration:")
     print(f"   Base model: {model_name}")
     print(f"   Number of labels: {num_labels}")
@@ -194,7 +285,27 @@ def main():
         
         # Initialize trainer
         print("🎯 Initializing trainer...")
-        trainer = Trainer(
+        
+        # ESG Trainer with balanced class weights - ALWAYS ENABLED
+        class ESGTrainer(Trainer):
+            def __init__(self, class_weights, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.class_weights = class_weights
+                
+            def compute_loss(self, model, inputs, return_outputs=False):
+                labels = inputs.get("labels")
+                outputs = model(**inputs)
+                logits = outputs.get('logits')
+                
+                # Always use balanced weighted loss
+                pos_weights = self.class_weights.to(logits.device)
+                loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weights, reduction='mean')
+                loss = loss_fn(logits, labels.float())
+                
+                return (loss, outputs) if return_outputs else loss
+        
+        trainer = ESGTrainer(
+            class_weights=class_weights,
             model=model,
             args=training_args,
             train_dataset=dataset["train"],
@@ -202,6 +313,8 @@ def main():
             data_collator=default_data_collator,
             compute_metrics=compute_metrics
         )
+        
+        print(f"   ✅ Balanced class weights applied to training")
         
         # Start training
         print("🏃 Starting training process...")
