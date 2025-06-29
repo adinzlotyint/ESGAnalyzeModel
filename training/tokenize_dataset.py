@@ -1,5 +1,5 @@
 from transformers import LongformerTokenizerFast
-from datasets import load_from_disk, Sequence, Value
+from datasets import load_from_disk, Sequence, Value, concatenate_datasets, DatasetDict
 import json
 
 with open("config.json") as f:
@@ -9,8 +9,24 @@ tokenizer = LongformerTokenizerFast.from_pretrained(cfg["model_name"])
 
 raw = load_from_disk(cfg["hf_dataset"])
 
+# Przechowuj oryginalne rozmiary podziałów do późniejszej rekonstrukcji
+train_size = len(raw['train'])
+val_size = len(raw['validation'])
+
+# Połącz zbiory danych, aby zapewnić unikalny doc_id w obu podziałach
+dataset = concatenate_datasets([raw['train'], raw['validation']])
+
 # doc_id = indeks wiersza, żeby wiedzieć skąd chunk pochodzi
-raw = raw.map(lambda _, idx: {"doc_id": idx}, with_indices=True)
+dataset = dataset.map(lambda _, idx: {"doc_id": idx}, with_indices=True)
+
+# Dodaj informacje o oryginalnym podziale, aby zachować rozróżnienie między treningiem a walidacją
+def add_split_info(examples, indices):
+    original_split = ["train" if idx < train_size else "validation" for idx in indices]
+    return {
+        "original_split": original_split
+    }
+
+dataset = dataset.map(add_split_info, with_indices=True, batched=True)
 
 def chunk_and_tokenize(examples):
     out = tokenizer(
@@ -26,10 +42,11 @@ def chunk_and_tokenize(examples):
     sample_map = out.pop("overflow_to_sample_mapping")
     out["doc_id"] = [examples["doc_id"][i] for i in sample_map]
     out["labels"] = [examples["labels"][i] for i in sample_map]
+    out["original_split"] = [examples["original_split"][i] for i in sample_map]
     
     return out
 
-tokenized = raw.map(
+tokenized = dataset.map(
     chunk_and_tokenize,
     batched=True,
     remove_columns=["text"],
@@ -40,5 +57,19 @@ tokenized = tokenized.cast_column(
     "labels", Sequence(Value("float32"))
 )
 
-tokenized.save_to_disk(cfg["tokenizer_output_path"])
-print("✅ Zapisano dataset:", tokenized)
+train_tokenized = tokenized.filter(lambda x: x["original_split"] == "train")
+val_tokenized = tokenized.filter(lambda x: x["original_split"] == "validation")
+
+train_tokenized = train_tokenized.remove_columns(["original_split"])
+val_tokenized = val_tokenized.remove_columns(["original_split"])
+
+final_dataset = DatasetDict({
+    "train": train_tokenized,
+    "validation": val_tokenized
+})
+
+final_dataset.save_to_disk(cfg["tokenizer_output_path"])
+print("✅ Zapisano dataset:")
+print(f"   Train: {len(final_dataset['train'])} chunks")
+print(f"   Validation: {len(final_dataset['validation'])} chunks")
+print(f"   Total: {len(final_dataset['train']) + len(final_dataset['validation'])} chunks")
