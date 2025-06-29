@@ -168,15 +168,25 @@ class ESGPipeline:
         
         return self.run_script("training/tokenize_dataset.py", "Dataset tokenization")
     
-    def step_training(self):
-        """Step 5: Train the model."""
-        self.print_step(5, 5, "MODEL TRAINING")
+    def step_training(self, method="basic"):
+        """Step 5: Train the model with specified method."""
+        self.print_step(5, 5, f"MODEL TRAINING ({method.upper()})")
         
         model_output = self.config.get("model_output_path")
-        print(f"🎯 Training model, output will be saved to: {model_output}")
+        print(f"🎯 Training model using {method} method")
+        print(f"📁 Output will be saved to: {model_output}")
         print(f"⏰ Timestamp: {self.timestamp}")
         
-        return self.run_script("training/train_model.py", "Model training")
+        # Map training methods to scripts
+        training_scripts = {
+            "basic": "training/train_model.py",
+            "hierarchical": "training/hierarchical_model.py", 
+            "positional": "training/positional_weighting.py",
+            "advanced": "training/advanced_training.py"
+        }
+        
+        script_path = training_scripts.get(method, "training/train_model.py")
+        return self.run_script(script_path, f"{method.capitalize()} model training")
     
     def run_pipeline(self, steps=None, force_clean=False, skip_download=False):
         """Run the complete pipeline or specific steps."""
@@ -255,22 +265,25 @@ def show_interactive_menu():
     print("  5. Run tokenization only")
     print()
     print("🎯 TRAINING:")
-    print("  6. Run training only (via pipeline)")
-    print("  7. Run training directly (full progress bars)")
+    print("  6. Train ESG model")
+    print("  7. Launch MLflow UI")
+    print()
+    print("🔍 INFERENCE:")
+    print("  8. Test PyTorch inference (interactive)")
     print()
     print("🧹 MAINTENANCE:")
-    print("  8. Clean all intermediate files and run full pipeline")
-    print("  9. Show current configuration")
+    print("  9. Clean all intermediate files and run full pipeline")
+    print("  10. Show current configuration")
     print("  0. Exit")
     print()
     
     while True:
         try:
-            choice = input("Enter your choice (0-9): ").strip()
-            if choice in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']:
+            choice = input("Enter your choice (0-10): ").strip()
+            if choice in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10']:
                 return choice
             else:
-                print("❌ Invalid choice. Please enter a number between 0-9.")
+                print("❌ Invalid choice. Please enter a number between 0-10.")
         except KeyboardInterrupt:
             print("\n👋 Goodbye!")
             sys.exit(0)
@@ -302,29 +315,108 @@ def execute_menu_choice(choice, pipeline):
         pipeline.run_pipeline(steps=['tokenize'])
     
     elif choice == '6':
-        print("🎯 Running training via pipeline...")
-        pipeline.run_pipeline(steps=['train'])
-    
-    elif choice == '7':
-        print("🎯 Running training directly...")
-        print("💡 Launching direct training script for full progress visibility...")
+        print("🎯 Training ESG model...")
+        print("📊 MLflow tracking will be automatically enabled")
+        print("💡 After training, use option 7 to view results in MLflow UI")
         try:
             result = subprocess.run([sys.executable, "training/train_model.py"], 
                                   encoding='utf-8', errors='replace')
             if result.returncode == 0:
-                print("✅ Training completed successfully!")
+                print("✅ ESG model training completed successfully!")
+                print("📊 Training metrics logged to MLflow")
+                response = input("Do you want to open MLflow UI now? (y/n): ").lower()
+                if response == 'y':
+                    launch_mlflow_ui()
             else:
-                print("❌ Training failed!")
+                print("❌ ESG model training failed!")
         except Exception as e:
             print(f"❌ Error running training: {e}")
     
+    elif choice == '7':
+        print("📊 Launching MLflow UI...")
+        launch_mlflow_ui()
+    
     elif choice == '8':
+        print("🔍 Testing PyTorch inference (interactive)...")
+        try:
+            result = subprocess.run([sys.executable, "scripts/inference.py", "--interactive"], 
+                                  encoding='utf-8', errors='replace')
+            if result.returncode == 0:
+                print("✅ Interactive inference completed!")
+            else:
+                print("❌ Interactive inference failed!")
+        except Exception as e:
+            print(f"❌ Error running interactive inference: {e}")
+    
+    elif choice == '9':
         print("🧹 Cleaning all files and running full pipeline...")
         pipeline.run_pipeline(force_clean=True)
     
-    elif choice == '9':
+    elif choice == '10':
         print("📋 Current Configuration:")
         print(json.dumps(pipeline.config, indent=2, ensure_ascii=False))
+
+def launch_mlflow_ui():
+    """Launch MLflow UI in a separate process."""
+    import threading
+    import webbrowser
+    import time
+    
+    print("🚀 Starting MLflow UI server...")
+    
+    # Check if mlruns directory exists
+    mlruns_path = Path("mlruns")
+    if not mlruns_path.exists():
+        print("⚠️ No MLflow experiments found yet.")
+        print("💡 Run training first to generate MLflow data.")
+        response = input("Do you want to create an empty MLflow setup? (y/n): ").lower()
+        if response == 'y':
+            mlruns_path.mkdir(exist_ok=True)
+            print("📁 MLflow directory created.")
+        else:
+            return
+    
+    try:
+        # Start MLflow UI in background
+        def start_mlflow():
+            cmd = [sys.executable, "-m", "mlflow", "ui", "--backend-store-uri", "./mlruns", "--host", "127.0.0.1", "--port", "5000"]
+            subprocess.run(cmd, capture_output=True, text=True)
+        
+        mlflow_thread = threading.Thread(target=start_mlflow, daemon=True)
+        mlflow_thread.start()
+        
+        # Give MLflow time to start
+        print("⏳ Starting MLflow server...")
+        time.sleep(3)
+        
+        # Open browser
+        mlflow_url = "http://127.0.0.1:5000"
+        print(f"🌐 Opening MLflow UI: {mlflow_url}")
+        
+        try:
+            webbrowser.open(mlflow_url)
+            print("✅ MLflow UI launched successfully!")
+            print("📊 You can now view your experiments and metrics")
+            print("⚠️ Keep this terminal open to maintain the MLflow server")
+            print("Press Ctrl+C to stop the MLflow server when done")
+            
+            # Keep the server running
+            print("\n🔄 MLflow server is running...")
+            print("Press Enter to return to main menu (server will continue in background)")
+            input()
+            
+        except Exception as e:
+            print(f"⚠️ Could not open browser automatically: {e}")
+            print(f"🌐 Manually open: {mlflow_url}")
+            print("Press Enter to continue...")
+            input()
+            
+    except FileNotFoundError:
+        print("❌ MLflow not installed!")
+        print("💡 Install with: pip install mlflow>=2.0.0")
+    except Exception as e:
+        print(f"❌ Error launching MLflow UI: {e}")
+        print("💡 Try manually: mlflow ui --backend-store-uri ./mlruns")
 
 def main():
     """Main CLI interface."""
@@ -334,14 +426,19 @@ def main():
         epilog="""
 Examples:
   python main.py                          # Interactive menu
-  python main.py --steps train            # Run training only  
   python main.py --steps conversion dataset # Run only specific steps
   python main.py --force-clean            # Clean all intermediate files
   python main.py --skip-download          # Skip model download
   python main.py --config custom.json    # Use custom config file
   
 Training:
-  python training/train_model.py         # Direct training with progress bars
+  python training/train_model.py         # ESG model training (with MLflow)
+  
+MLflow:
+  mlflow ui --backend-store-uri ./mlruns  # Manual MLflow UI launch
+  
+Inference:
+  python scripts/inference.py --interactive    # Interactive inference
         """
     )
     
@@ -354,8 +451,8 @@ Training:
     parser.add_argument(
         '--steps',
         nargs='+',
-        choices=['conversion', 'dataset', 'download', 'tokenize', 'train'],
-        help='Specific steps to run (default: interactive menu)'
+        choices=['conversion', 'dataset', 'download', 'tokenize'],
+        help='Specific pipeline steps to run (training done via menu)'
     )
     
     parser.add_argument(
