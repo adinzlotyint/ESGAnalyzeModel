@@ -11,7 +11,8 @@ raw = load_from_disk(cfg["hf_dataset"])
 
 # Przechowuj oryginalne rozmiary podziałów do późniejszej rekonstrukcji
 train_size = len(raw['train'])
-val_size = len(raw['validation'])
+val_size   = len(raw['validation'])
+test_size  = len(raw['test'])
 
 # Połącz zbiory danych, aby zapewnić unikalny doc_id w obu podziałach
 dataset = concatenate_datasets([raw['train'], raw['validation']])
@@ -21,7 +22,12 @@ dataset = dataset.map(lambda _, idx: {"doc_id": idx}, with_indices=True)
 
 # Dodaj informacje o oryginalnym podziale, aby zachować rozróżnienie między treningiem a walidacją
 def add_split_info(examples, indices):
-    original_split = ["train" if idx < train_size else "validation" for idx in indices]
+    original_split = [
+        "train"      if idx < train_size
+        else "validation" if idx < train_size + val_size
+        else "test"
+        for idx in indices
+    ]
     return {
         "original_split": original_split
     }
@@ -59,13 +65,16 @@ tokenized = tokenized.cast_column(
 
 train_tokenized = tokenized.filter(lambda x: x["original_split"] == "train")
 val_tokenized = tokenized.filter(lambda x: x["original_split"] == "validation")
+test_tokenized = tokenized.filter(lambda x: x["original_split"] == "test")
 
 train_tokenized = train_tokenized.remove_columns(["original_split"])
 val_tokenized = val_tokenized.remove_columns(["original_split"])
+test_tokenized = test_tokenized.remove_columns(["original_split"])
 
 final_dataset = DatasetDict({
-    "train": train_tokenized,
-    "validation": val_tokenized
+    "train":       train_tokenized,
+    "validation":  val_tokenized,
+    "test":        test_tokenized
 })
 
 final_dataset.save_to_disk(cfg["tokenizer_output_path"])
