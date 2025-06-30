@@ -40,13 +40,16 @@ def main():
         print(f"🏷️  Sample features: {dataset.features}")
         
         # Split into train/validation (80/20)
-        print("✂️  Splitting dataset (80% train, 20% validation)...")
-        dataset_split = dataset.train_test_split(test_size=0.2, seed=42)
+        print("✂️  Splitting dataset (80% train, 10% validation, 10% test)...")
+        first_split  = dataset.train_test_split(test_size=0.2, seed=42)   # 80 train | 20 temp
+        train_val    = first_split['train']
+        temp_split   = first_split['test'].train_test_split(test_size=0.5, seed=42)  # 10 val | 10 test
         
         # Create DatasetDict
         dataset_dict = DatasetDict({
-            'train': dataset_split['train'],
-            'validation': dataset_split['test']
+            'train':      train_val,
+            'validation': temp_split['train'],
+            'test':       temp_split['test'],
         })
         
         print(f"📊 Train samples: {len(dataset_dict['train'])}")
