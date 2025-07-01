@@ -1,0 +1,15 @@
+artifact_uri: file:///D:/Studia/Magisterka/Praca%20magisterska/Program%20New/ESGAnalyzeModel/mlruns/346570186871245673/89c0ad3f781441dda177371e77f05edf/artifacts
+deleted_time: 1751311877719
+end_time: 1751311199514
+entry_point_name: ''
+experiment_id: '346570186871245673'
+lifecycle_stage: deleted
+run_id: 89c0ad3f781441dda177371e77f05edf
+run_name: longformer-esg-20250630_211958
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1751311199080
+status: 3
+tags: []
+user_id: adria

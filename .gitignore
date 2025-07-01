@@ -34,7 +34,6 @@ outputs/
 runs/
 logs/
 models/
-mlruns/
 
 # VS Code / PyCharm
 .vscode/
