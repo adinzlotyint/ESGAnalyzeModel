@@ -14,8 +14,8 @@ train_size = len(raw['train'])
 val_size   = len(raw['validation'])
 test_size  = len(raw['test'])
 
-# Połącz zbiory danych, aby zapewnić unikalny doc_id w obu podziałach
-dataset = concatenate_datasets([raw['train'], raw['validation']])
+# Połącz wszystkie zbiory danych, aby zapewnić unikalny doc_id we wszystkich podziałach
+dataset = concatenate_datasets([raw['train'], raw['validation'], raw['test']])
 
 # doc_id = indeks wiersza, żeby wiedzieć skąd chunk pochodzi
 dataset = dataset.map(lambda _, idx: {"doc_id": idx}, with_indices=True)
@@ -81,4 +81,5 @@ final_dataset.save_to_disk(cfg["tokenizer_output_path"])
 print("✅ Zapisano dataset:")
 print(f"   Train: {len(final_dataset['train'])} chunks")
 print(f"   Validation: {len(final_dataset['validation'])} chunks")
-print(f"   Total: {len(final_dataset['train']) + len(final_dataset['validation'])} chunks")
+print(f"   Test: {len(final_dataset['test'])} chunks")
+print(f"   Total: {len(final_dataset['train']) + len(final_dataset['validation']) + len(final_dataset['test'])} chunks")

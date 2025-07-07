@@ -54,7 +54,8 @@ def main():
         
         print(f"📊 Train samples: {len(dataset_dict['train'])}")
         print(f"📊 Validation samples: {len(dataset_dict['validation'])}")
-        
+        print(f"📊 Test samples: {len(dataset_dict['test'])}")
+
         # Save to disk
         print(f"💾 Saving dataset to: {hf_dataset_path}")
         dataset_dict.save_to_disk(hf_dataset_path)

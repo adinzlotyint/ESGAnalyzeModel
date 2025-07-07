@@ -29,8 +29,8 @@ def load_config():
     with open(config_path, "r", encoding="utf-8") as file:
         return json.load(file)
 
-def calculate_moderate_class_weights(dataset, num_labels=7):
-    """Calculate moderate class weights using square root scaling."""
+def calculate_class_weights(dataset, method="balanced", num_labels=7):
+    """Calculate class weights based on the specified method."""
     all_labels = np.array(dataset['labels'])
     class_weights = []
     
@@ -41,8 +41,18 @@ def calculate_moderate_class_weights(dataset, num_labels=7):
         
         if pos_count > 0:
             pos_freq = pos_count / total_count
-            pos_weight = np.sqrt(1 / pos_freq)
-            pos_weight = min(pos_weight, 1.5)  # Cap at 1.5
+            
+            if method == "balanced":
+                # Standard sklearn balanced weighting
+                pos_weight = total_count / (2 * pos_count)
+            elif method == "sqrt":
+                # Square root weighting
+                pos_weight = np.sqrt(1 / pos_freq)
+            elif method == "log":
+                # Logarithmic weighting
+                pos_weight = np.log(1 / pos_freq) + 1
+            else:
+                pos_weight = 1.0
         else:
             pos_weight = 1.0
             
@@ -51,7 +61,7 @@ def calculate_moderate_class_weights(dataset, num_labels=7):
     return torch.FloatTensor(class_weights)
 
 def compute_metrics(eval_pred):
-    """Compute basic evaluation metrics during training."""
+    """Compute evaluation metrics during training (basic 0.5 threshold)."""
     predictions, labels = eval_pred
     
     # Apply sigmoid to get probabilities
@@ -133,9 +143,10 @@ def evaluate_with_thresholds(model, test_dataset, optimal_thresholds, device=Non
     all_probs = []
     all_labels = []
     
-    # Create test dataloader
+    # Create test dataloader with proper format
     from torch.utils.data import DataLoader
-    test_dataloader = DataLoader(test_dataset, batch_size=8, shuffle=False)
+    test_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'labels'])
+    test_dataloader = DataLoader(test_dataset, batch_size=8, shuffle=False, collate_fn=default_data_collator)
     
     with torch.no_grad():
         for batch in test_dataloader:
@@ -189,7 +200,7 @@ def setup_mlflow(config: Dict[str, Any], output_dir: str) -> None:
         "num_epochs": training_args.get("num_train_epochs"),
         "learning_rate": training_args.get("learning_rate"),
         "batch_size": training_args.get("per_device_train_batch_size"),
-        "class_weight_method": "moderate",
+        "class_weight_method": config.get("class_weight_method", "balanced"),
     })
 
 def main():
@@ -219,7 +230,6 @@ def main():
     
     # Load tokenized dataset
     tokenizer_output_path = config.get("tokenizer_output_path")
-    dataset = load_from_disk(tokenizer_output_path)
     if not tokenizer_output_path or not os.path.exists(tokenizer_output_path):
         print(f"❌ Tokenized dataset not found at: {tokenizer_output_path}")
         return False
@@ -232,8 +242,10 @@ def main():
     num_labels = config.get("num_labels", 7)
     problem_type = config.get("problem_type", "multi_label_classification")
     
-    # Calculate moderate class weights
-    class_weights = calculate_moderate_class_weights(dataset["train"], num_labels=num_labels)
+    # Calculate class weights based on config
+    class_weight_method = config.get("class_weight_method", "balanced")
+    class_weights = calculate_class_weights(dataset["train"], method=class_weight_method, num_labels=num_labels)
+    print(f"📊 Using {class_weight_method} class weighting")
     
     try:
         # Load model
@@ -253,7 +265,7 @@ def main():
         training_args_config["output_dir"] = output_dir
         training_args = TrainingArguments(**training_args_config)
         
-        # ESG Trainer with moderate class weights
+        # ESG Trainer with balanced class weights
         class ESGTrainer(Trainer):
             def __init__(self, class_weights, *args, **kwargs):
                 super().__init__(*args, **kwargs)
@@ -284,21 +296,43 @@ def main():
         trainer.train()
         
         # Post-training threshold optimization
+        print("\n🎯 Optimizing classification thresholds...")
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         val_dataloader = trainer.get_eval_dataloader()
         optimal_thresholds = optimize_thresholds_post_training(
-            model, val_dataloader, training_args.device
+            model, val_dataloader, device
         )
+        
+        # Print optimized thresholds
+        esg_labels = ['C1', 'C2', 'C3', 'C5', 'C8', 'C9', 'C10']
+        print("\n📊 Optimized Thresholds:")
+        for i, (label, threshold) in enumerate(zip(esg_labels, optimal_thresholds)):
+            print(f"   {label}: {threshold:.3f}")
         
         # Final evaluation with optimal thresholds
+        print("\n🔍 Final evaluation with optimized thresholds...")
         final_results = evaluate_with_thresholds(
-            model, dataset["test"], optimal_thresholds, training_args.device
+            model, dataset["test"], optimal_thresholds, device
         )
         
-        # Log ONLY final results to MLflow
+        # Print final results to CLI
+        print("\n✨ FINAL RESULTS (with optimized thresholds):")
+        print(f"   F1-Macro: {final_results['final_eval_f1_macro']:.4f}")
+        print(f"   Accuracy: {final_results['final_eval_accuracy']:.4f}")
+        print("   Per-category F1 scores:")
+        for label in esg_labels:
+            key = f'final_eval_f1_{label}'
+            if key in final_results:
+                print(f"     {label}: {final_results[key]:.4f}")
+        
+        # Log to MLflow
         if mlflow.active_run():
-            # Get final epoch number
             final_epoch = training_args.num_train_epochs
             mlflow.log_metric("final_epoch", final_epoch)
+            
+            # Log optimal thresholds
+            for i, (label, threshold) in enumerate(zip(esg_labels, optimal_thresholds)):
+                mlflow.log_metric(f"optimal_threshold_{label}", threshold)
             
             # Log final metrics
             for key, value in final_results.items():
