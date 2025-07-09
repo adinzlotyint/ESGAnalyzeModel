@@ -9,18 +9,18 @@ tokenizer = LongformerTokenizerFast.from_pretrained(cfg["model_name"])
 
 raw = load_from_disk(cfg["hf_dataset"])
 
-# Przechowuj oryginalne rozmiary podziałów do późniejszej rekonstrukcji
+# Store original sizes for later reconstruction
 train_size = len(raw['train'])
 val_size   = len(raw['validation'])
 test_size  = len(raw['test'])
 
-# Połącz wszystkie zbiory danych, aby zapewnić unikalny doc_id we wszystkich podziałach
+# Merge all datasets to ensure a unique doc_id between splits
 dataset = concatenate_datasets([raw['train'], raw['validation'], raw['test']])
 
-# doc_id = indeks wiersza, żeby wiedzieć skąd chunk pochodzi
+# doc_id = row index to know where the chunk came from
 dataset = dataset.map(lambda _, idx: {"doc_id": idx}, with_indices=True)
 
-# Dodaj informacje o oryginalnym podziale, aby zachować rozróżnienie między treningiem a walidacją
+# Add information about the original division to keep the distinction between training and validation
 def add_split_info(examples, indices):
     original_split = [
         "train"      if idx < train_size
@@ -78,7 +78,7 @@ final_dataset = DatasetDict({
 })
 
 final_dataset.save_to_disk(cfg["tokenizer_output_path"])
-print("✅ Zapisano dataset:")
+print("✅ Dataset saved:")
 print(f"   Train: {len(final_dataset['train'])} chunks")
 print(f"   Validation: {len(final_dataset['validation'])} chunks")
 print(f"   Test: {len(final_dataset['test'])} chunks")
