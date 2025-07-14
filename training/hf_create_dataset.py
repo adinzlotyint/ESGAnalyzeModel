@@ -2,7 +2,7 @@ from datasets import load_dataset, DatasetDict
 import json
 import os
 import numpy as np
-from skmultilearn.model_selection import IterativeStratification
+from skmultilearn.model_selection import iterative_train_test_split
 
 def load_config():
     """Load configuration from the main config.json file."""
@@ -41,27 +41,21 @@ def main():
 
         # Stratyfikacja
         print("🧬 Performing Stratified Multi-Label Split (80/10/10)...")
-        
+
         X = np.arange(len(dataset)).reshape(-1, 1)
         y = np.array(dataset['labels'])
         
-        stratifier_train_temp = IterativeStratification(n_splits=1, order=1, sample_distribution_per_fold=[0.2, 0.8])
+        train_indices, y_train, temp_indices, y_temp = iterative_train_test_split(
+            X, y, test_size=0.2
+        )
 
-        temp_indices_list, train_indices_list = next(stratifier_train_temp.split(X, y))
-        
-        X_temp = X[temp_indices_list]
-        y_temp = y[temp_indices_list]
-        
-        stratifier_val_test = IterativeStratification(n_splits=1, order=1, sample_distribution_per_fold=[0.5, 0.5])
-        test_relative_indices, val_relative_indices = next(stratifier_val_test.split(X_temp, y_temp))
+        val_indices, y_val, test_indices, y_test = iterative_train_test_split(
+            temp_indices, y_temp, test_size=0.5
+        )
 
-        train_indices = train_indices_list
-        val_indices = temp_indices_list[val_relative_indices]
-        test_indices = temp_indices_list[test_relative_indices]
-
-        train_dataset = dataset.select(train_indices)
-        validation_dataset = dataset.select(val_indices)
-        test_dataset = dataset.select(test_indices)
+        train_dataset = dataset.select(train_indices.flatten())
+        validation_dataset = dataset.select(val_indices.flatten())
+        test_dataset = dataset.select(test_indices.flatten())
         
         dataset_dict = DatasetDict({
             'train':      train_dataset,
