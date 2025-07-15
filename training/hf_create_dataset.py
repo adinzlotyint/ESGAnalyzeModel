@@ -1,85 +1,101 @@
-from datasets import load_dataset, DatasetDict
 import json
 import os
+import sys
 import numpy as np
+from pathlib import Path
+from datasets import load_dataset, DatasetDict
 from skmultilearn.model_selection import iterative_train_test_split
 
-def load_config():
-    """Load configuration from the main config.json file."""
-    config_path = "config.json"
-    
-    if not os.path.exists(config_path):
-        print(f"❌ Configuration file {config_path} not found!")
-        return None
-        
-    with open(config_path, "r", encoding="utf-8") as file:
-        return json.load(file)
+def load_config() -> dict:
+    """
+    Loads the main project configuration from the root directory.
+
+    Returns:
+        dict: The project configuration.
+    """
+    project_root = Path(__file__).parent.parent
+    config_path = project_root / "config.json"
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"❌ Configuration file not found at: {config_path}")
+        sys.exit(1)
+
+def load_and_split_data(jsonl_path: str) -> DatasetDict:
+    """
+    Loads data from a JSONL file and performs a stratified multi-label split
+    into train, validation, and test sets (80/10/10).
+
+    Args:
+        jsonl_path (str): The path to the final processed JSONL data file.
+
+    Returns:
+        DatasetDict: A dictionary containing 'train', 'validation', and 'test' splits.
+    """
+    print(f"📁 Loading data from: {jsonl_path}")
+    dataset = load_dataset('json', data_files=jsonl_path, split='train')
+    print(f"📊 Full dataset loaded with {len(dataset)} samples.")
+
+    print("🧬 Performing stratified multi-label split (80/10/10)...")
+    # We use indices as a dummy X for the splitter.
+    indices = np.arange(len(dataset)).reshape(-1, 1)
+    labels = np.array(dataset['labels'])
+
+    # First split: 80% train, 20% temporary (for validation and test)
+    train_idx, _, temp_idx, temp_labels = iterative_train_test_split(
+        indices, labels, test_size=0.2
+    )
+
+    # Second split: split the temporary set into 50% validation and 50% test
+    val_idx, _, test_idx, _ = iterative_train_test_split(
+        temp_idx, temp_labels, test_size=0.5
+    )
+
+    return DatasetDict({
+        'train': dataset.select(train_idx.flatten()),
+        'validation': dataset.select(val_idx.flatten()),
+        'test': dataset.select(test_idx.flatten()),
+    })
+
+def save_dataset(dataset_dict: DatasetDict, save_path: str):
+    """
+    Saves a DatasetDict to disk and prints the final sample counts.
+
+    Args:
+        dataset_dict (DatasetDict): The dataset to save.
+        save_path (str): The directory where the dataset will be saved.
+    """
+    print("\n📊 Final split sizes:")
+    print(f"   - Train samples:      {len(dataset_dict['train'])}")
+    print(f"   - Validation samples: {len(dataset_dict['validation'])}")
+    print(f"   - Test samples:       {len(dataset_dict['test'])}")
+
+    print(f"\n💾 Saving dataset to: {save_path}")
+    dataset_dict.save_to_disk(save_path)
+    print(f"✅ Stratified HuggingFace dataset created successfully at: {save_path}")
 
 def main():
-    """Create HuggingFace dataset from processed JSONL file with STRATIFIED split."""
-    print("📊 Creating HuggingFace dataset...")
+    """
+    Main script to create and save a stratified HuggingFace dataset.
+    """
+    print("\n🚀 Starting HuggingFace dataset creation...")
     
     config = load_config()
-    if not config:
-        return False
-    
     final_jsonl_path = config.get("final_jsonl")
     hf_dataset_path = config.get("hf_dataset")
-    
+
     if not final_jsonl_path or not os.path.exists(final_jsonl_path):
-        print(f"❌ Final JSONL file not found: {final_jsonl_path}")
-        print("💡 Please run conversion step first")
-        return False
-    
-    print(f"📁 Loading data from: {final_jsonl_path}")
+        print(f"❌ Final data file not found at: {final_jsonl_path}")
+        print("💡 Please run the 'conversion' step first.")
+        sys.exit(1)
     
     try:
-        dataset = load_dataset('json', data_files=final_jsonl_path, split='train')
-        
-        print(f"📊 Full dataset loaded: {len(dataset)} samples")
-        print(f"🏷️  Sample features: {dataset.features}")
-
-        # Stratyfikacja
-        print("🧬 Performing Stratified Multi-Label Split (80/10/10)...")
-
-        X = np.arange(len(dataset)).reshape(-1, 1)
-        y = np.array(dataset['labels'])
-        
-        train_indices, y_train, temp_indices, y_temp = iterative_train_test_split(
-            X, y, test_size=0.2
-        )
-
-        val_indices, y_val, test_indices, y_test = iterative_train_test_split(
-            temp_indices, y_temp, test_size=0.5
-        )
-
-        train_dataset = dataset.select(train_indices.flatten())
-        validation_dataset = dataset.select(val_indices.flatten())
-        test_dataset = dataset.select(test_indices.flatten())
-        
-        dataset_dict = DatasetDict({
-            'train':      train_dataset,
-            'validation': validation_dataset,
-            'test':       test_dataset,
-        })
-        
-        print(f"📊 Train samples: {len(dataset_dict['train'])}")
-        print(f"📊 Validation samples: {len(dataset_dict['validation'])}")
-        print(f"📊 Test samples: {len(dataset_dict['test'])}")
-
-        print(f"💾 Saving dataset to: {hf_dataset_path}")
-        dataset_dict.save_to_disk(hf_dataset_path)
-        
-        print(f"✅ Stratified HuggingFace dataset created successfully!")
-        print(f"📂 Dataset saved to: {hf_dataset_path}")
-        
-        return True
-        
+        stratified_dataset = load_and_split_data(final_jsonl_path)
+        save_dataset(stratified_dataset, hf_dataset_path)
     except Exception as e:
-        print(f"❌ Error creating dataset: {e}")
-        return False
+        print(f"\n❌ An unexpected error occurred during dataset creation: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    success = main()
-    if not success:
-        exit(1)
+    main()
