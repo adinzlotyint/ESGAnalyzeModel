@@ -1,237 +1,194 @@
-import os, sys, json, shutil, subprocess
+import os
+import sys
+import json
+import shutil
+import subprocess
 from pathlib import Path
 from datetime import datetime
 
 class ESGPipeline:
-    def __init__(self, config_path="config.json"):
-        """Initialize the pipeline with configuration."""
+    """
+    Orchestrates the data preparation pipeline for the ESGAnalyzeModel.
+
+    This class manages the sequence of data processing steps, including
+    conversion, cleaning, dataset creation, model downloading, and tokenization.
+    It is configured via a JSON file and handles intermediate file management,
+    logging, and error reporting.
+    """
+
+    def __init__(self, config_path: str = "config.json"):
+        """
+        Initializes the pipeline with a specified configuration.
+
+        Args:
+            config_path (str): Path to the JSON configuration file.
+        """
         self.config_path = config_path
-        self.config = self.load_config()
+        self.config = self._load_config()
         self.timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        
-    def load_config(self):
-        """Load configuration from JSON file."""
+
+    def _load_config(self) -> dict:
+        # Loads the configuration from a JSON file.
         try:
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except FileNotFoundError:
-            print(f"❌ Configuration file {self.config_path} not found!")
+            print(f"❌ Configuration file not found: {self.config_path}")
             sys.exit(1)
         except json.JSONDecodeError as e:
             print(f"❌ Error parsing configuration file: {e}")
             sys.exit(1)
-    
-    def print_step(self, step_num, total_steps, description):
-        """Print formatted step information."""
+
+    def _print_step_header(self, step_num: int, total_steps: int, description: str):
+        # Prints a formatted header for a pipeline step.
         print(f"\n{'='*60}")
         print(f"🚀 STEP {step_num}/{total_steps}: {description}")
         print(f"{'='*60}")
-    
-    def check_file_exists(self, filepath, description="File"):
-        """Check if a file exists and print status."""
-        if os.path.exists(filepath):
-            print(f"✅ {description} found: {filepath}")
-            return True
-        else:
-            print(f"❌ {description} not found: {filepath}")
-            return False
-    
-    def clean_directory(self, directory_path, description="Directory"):
-        """Remove directory if it exists."""
-        if os.path.exists(directory_path):
-            print(f"🧹 Cleaning existing {description}: {directory_path}")
-            shutil.rmtree(directory_path)
-            print(f"✅ {description} cleaned")
-        else:
-            print(f"ℹ️  {description} doesn't exist, nothing to clean")
-    
-    def create_directory(self, directory_path, description="Directory"):
-        """Create directory if it doesn't exist."""
-        Path(directory_path).mkdir(parents=True, exist_ok=True)
-        print(f"📁 {description} ready: {directory_path}")
-    
-    def run_script(self, script_name, description):
-        """Run a Python script and handle errors."""
-        print(f"▶️  Running {script_name}...")
+
+    def _run_script(self, script_path: str, description: str) -> bool:
+        """
+        Runs a Python script as a subprocess and handles its execution.
+
+        Args:
+            script_path (str): The path to the Python script to execute.
+            description (str): A brief description of the script's purpose.
+
+        Returns:
+            bool: True if the script ran successfully, False otherwise.
+        """
+        print(f"▶️  Executing script: {script_path}...")
         try:
-            result = subprocess.run([sys.executable, script_name], 
-                                  capture_output=True, text=True, check=True, 
-                                  encoding='utf-8', errors='replace')
-            print(f"✅ {description} completed successfully")
+            result = subprocess.run(
+                [sys.executable, script_path],
+                capture_output=True, text=True, check=True,
+                encoding='utf-8', errors='replace'
+            )
+            print(f"✅ {description} completed successfully.")
             if result.stdout:
-                print("📄 Output:", result.stdout.strip())
+                # Print script output for better traceability.
+                print("   └── Script output:", result.stdout.strip().replace("\n", "\n   "))
             return True
         except subprocess.CalledProcessError as e:
             print(f"❌ {description} failed!")
-            print(f"Error: {e.stderr}")
+            print(f"   └── Error output:\n{e.stderr.strip()}")
             return False
         except FileNotFoundError:
-            print(f"❌ Script {script_name} not found!")
+            print(f"❌ Script not found: {script_path}")
             return False
-    
-    def step_conversion(self, force_clean=False):
-        """Step 1: Data conversion and cleaning."""
-        self.print_step(1, 4, "DATA CONVERSION & CLEANING")
-        
-        # Check if intermediate files exist and clean if requested
-        intermediate_files = [
-            self.config.get("converted_csv_path"),
-            self.config.get("cleaned_jsonl_path"),
-            self.config.get("merged_jsonl_path"),
-            self.config.get("final_jsonl")
-        ]
-        
-        if force_clean:
-            for file_path in intermediate_files:
-                if file_path and os.path.exists(file_path):
-                    os.remove(file_path)
-                    print(f"🧹 Removed: {file_path}")
-        
-        # Check if final output already exists
-        final_output = self.config.get("final_jsonl")
-        if final_output and os.path.exists(final_output) and not force_clean:
-            print(f"ℹ️  Final dataset already exists: {final_output}")
-            response = input("Do you want to skip conversion? (y/n): ").lower()
-            if response == 'y':
-                print("⏭️  Skipping conversion step")
-                return True
-        
-        # Check input files
-        raw_csv = self.config.get("raw_csv_path")
-        raw_jsonl = self.config.get("raw_jsonl_path")
-        
-        if not self.check_file_exists(raw_csv, "Raw CSV file"):
-            return False
-        if not self.check_file_exists(raw_jsonl, "Raw JSONL file"):
-            return False
-        
-        return self.run_script("scripts/conversion.py", "Data conversion")
-    
-    def step_create_dataset(self, force_clean=False):
-        """Step 2: Create HuggingFace dataset."""
-        self.print_step(2, 4, "HUGGINGFACE DATASET CREATION")
-        
-        hf_dataset_path = self.config.get("hf_dataset")
-        if force_clean:
-            self.clean_directory(hf_dataset_path, "HuggingFace dataset directory")
-        
-        if hf_dataset_path and os.path.exists(hf_dataset_path) and not force_clean:
-            print(f"ℹ️  HuggingFace dataset already exists: {hf_dataset_path}")
-            response = input("Do you want to recreate it? (y/n): ").lower()
+
+    def _clean_directory(self, dir_path: str, description: str):
+        # Removes a directory and all its contents if it exists.
+        if os.path.exists(dir_path):
+            print(f"🧹 Cleaning existing {description.lower()}: {dir_path}")
+            shutil.rmtree(dir_path)
+            print(f"✅ {description} cleaned.")
+
+    def _handle_existing_output(self, path: str, name: str, action: str) -> bool:
+        """
+        Checks if an output path exists and asks the user whether to skip the step.
+
+        Returns:
+            bool: True if the step should be skipped, False otherwise.
+        """
+        if path and os.path.exists(path):
+            print(f"ℹ️  {name} already exists at: {path}")
+            response = input(f"Do you want to {action}? (y/n): ").lower()
             if response == 'n':
-                print("⏭️  Skipping dataset creation")
+                print(f"⏭️  Skipping {name.lower()} creation.")
                 return True
             else:
-                self.clean_directory(hf_dataset_path, "HuggingFace dataset directory")
+                if os.path.isdir(path):
+                    self._clean_directory(path, name)
+                else:
+                    os.remove(path)
+                    print(f"🧹 Removed old file: {path}")
+        return False
         
-        return self.run_script("training/hf_create_dataset.py", "HuggingFace dataset creation")
-    
-    def step_download_snapshot(self):
-        """Step 3: Download model snapshot."""
-        self.print_step(3, 4, "MODEL SNAPSHOT DOWNLOAD")
-        
-        model_name = self.config.get("model_name")
-        print(f"📥 Downloading model: {model_name}")
-        
-        return self.run_script("training/download_snapshot.py", "Model snapshot download")
-    
-    def step_tokenization(self, force_clean=False):
-        """Step 4: Tokenize dataset."""
-        self.print_step(4, 4, "DATASET TOKENIZATION")
-        
-        tokenizer_output = self.config.get("tokenizer_output_path")
+    def step_conversion(self, force_clean: bool) -> bool:
+        """Step 1: Convert and clean raw data."""
+        self._print_step_header(1, 4, "DATA CONVERSION & CLEANING")
         if force_clean:
-            self.clean_directory(tokenizer_output, "Tokenizer output directory")
+            for key in ["converted_csv_path", "cleaned_jsonl_path", "merged_jsonl_path", "final_jsonl"]:
+                if self.config.get(key) and os.path.exists(self.config[key]):
+                    os.remove(self.config[key])
+                    print(f"🧹 Removed intermediate file: {self.config[key]}")
         
-        if tokenizer_output and os.path.exists(tokenizer_output) and not force_clean:
-            print(f"ℹ️  Tokenized dataset already exists: {tokenizer_output}")
-            response = input("Do you want to retokenize? (y/n): ").lower()
-            if response == 'n':
-                print("⏭️  Skipping tokenization")
-                return True
-            else:
-                self.clean_directory(tokenizer_output, "Tokenizer output directory")
-        
-        return self.run_script("training/tokenize_dataset.py", "Dataset tokenization")
-    
-    def step_training(self, method="basic"):
-        """Step 5: Train the model with specified method."""
-        self.print_step(5, 5, f"MODEL TRAINING ({method.upper()})")
-        
-        model_output = self.config.get("model_output_path")
-        print(f"🎯 Training model using {method} method")
-        print(f"📁 Output will be saved to: {model_output}")
-        print(f"⏰ Timestamp: {self.timestamp}")
-        
-        # Map training methods to scripts
-        training_scripts = {
-            "basic": "training/train_model.py",
-            "hierarchical": "training/hierarchical_model.py", 
-            "positional": "training/positional_weighting.py",
-            "advanced": "training/advanced_training.py"
+        if not force_clean and self._handle_existing_output(self.config['final_jsonl'], "Final dataset file", "recreate it"):
+            return True
+
+        return self._run_script("scripts/conversion.py", "Data conversion")
+
+    def step_create_dataset(self, force_clean: bool) -> bool:
+        """Step 2: Create a HuggingFace dataset."""
+        self._print_step_header(2, 4, "HUGGINGFACE DATASET CREATION")
+        if force_clean:
+            self._clean_directory(self.config['hf_dataset'], "HuggingFace dataset directory")
+        elif self._handle_existing_output(self.config['hf_dataset'], "HuggingFace dataset", "recreate it"):
+            return True
+
+        return self._run_script("training/hf_create_dataset.py", "HuggingFace dataset creation")
+
+    def step_download_snapshot(self) -> bool:
+        """Step 3: Download the model snapshot from Hugging Face Hub."""
+        self._print_step_header(3, 4, "MODEL SNAPSHOT DOWNLOAD")
+        print(f"📥 Model to download: {self.config.get('model_name')}")
+        return self._run_script("training/download_snapshot.py", "Model snapshot download")
+
+    def step_tokenization(self, force_clean: bool) -> bool:
+        """Step 4: Tokenize the dataset."""
+        self._print_step_header(4, 4, "DATASET TOKENIZATION")
+        if force_clean:
+            self._clean_directory(self.config['tokenizer_output_path'], "Tokenized dataset directory")
+        elif self._handle_existing_output(self.config['tokenizer_output_path'], "Tokenized dataset", "re-tokenize it"):
+            return True
+
+        return self._run_script("training/tokenize_dataset.py", "Dataset tokenization")
+
+    def run_pipeline(self, steps: list = None, force_clean: bool = False, skip_download: bool = False):
+        """
+        Runs the data preparation pipeline.
+
+        Args:
+            steps (list, optional): A list of specific steps to run. 
+                                    Defaults to all data preparation steps.
+            force_clean (bool): If True, cleans all intermediate files before starting.
+            skip_download (bool): If True, skips the model download step.
+        """
+        pipeline_steps = {
+            'conversion': self.step_conversion,
+            'dataset': self.step_create_dataset,
+            'download': self.step_download_snapshot,
+            'tokenize': self.step_tokenization,
         }
         
-        script_path = training_scripts.get(method, "training/train_model.py")
-        return self.run_script(script_path, f"{method.capitalize()} model training")
-    
-    def run_pipeline(self, steps=None, force_clean=False, skip_download=False):
-        """Run the complete pipeline or specific steps."""
-        # Default pipeline excludes training - run training separately for better visibility
-        default_steps = ['conversion', 'dataset', 'download', 'tokenize']
-        all_steps = ['conversion', 'dataset', 'download', 'tokenize', 'train']
-        
         if steps is None:
-            steps = default_steps
-        
-        print(f"🎬 Starting ESG Model Training Pipeline")
-        print(f"📅 Timestamp: {self.timestamp}")
-        print(f"📋 Steps to execute: {', '.join(steps)}")
-        print(f"🧹 Force clean: {force_clean}")
-        
-        # Verify configuration
-        print(f"\n📋 Configuration Summary:")
-        print(f"   Model: {self.config.get('model_name')}")
-        print(f"   Labels: {self.config.get('num_labels')}")
-        print(f"   Problem type: {self.config.get('problem_type')}")
-        
-        success = True
-        
+            steps_to_run = list(pipeline_steps.keys())
+        else:
+            steps_to_run = steps
+
+        print(f"\n🎬 Starting ESG Data Preparation Pipeline")
+        print(f"   Timestamp: {self.timestamp}")
+        print(f"   Steps to execute: {', '.join(steps_to_run)}")
+        print(f"   Force clean: {force_clean}")
+
         try:
-            if 'conversion' in steps:
-                if not self.step_conversion(force_clean):
-                    success = False
-                    
-            if 'dataset' in steps and success:
-                if not self.step_create_dataset(force_clean):
-                    success = False
-                    
-            if 'download' in steps and success and not skip_download:
-                if not self.step_download_snapshot():
-                    success = False
-                    
-            if 'tokenize' in steps and success:
-                if not self.step_tokenization(force_clean):
-                    success = False
-                    
-            if 'train' in steps and success:
-                if not self.step_training():
-                    success = False
-            
-            if success:
-                print(f"\n🎉 Pipeline completed successfully!")
-                print(f"⏰ Finished at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                if 'train' not in steps:
-                    print(f"\n💡 Ready for training! Run:")
-                    print(f"   python main.py --steps train")
-                    print(f"   OR")
-                    print(f"   python training/train_model.py")
-            else:
-                print(f"\n❌ Pipeline failed at one of the steps")
-                sys.exit(1)
+            for step_name in steps_to_run:
+                if step_name == 'download' and skip_download:
+                    print("\n⏭️  Skipping model download as requested.")
+                    continue
                 
+                step_func = pipeline_steps.get(step_name)
+                if not step_func(force_clean=force_clean):
+                    print(f"\n❌ Pipeline failed at step: '{step_name}'. Aborting.")
+                    sys.exit(1)
+
+            print(f"\n🎉 Data pipeline completed successfully!")
+            print(f"   Finished at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print("\n💡 Ready for training! You can now run the model training step from the main menu.")
+
         except KeyboardInterrupt:
-            print(f"\n⚠️  Pipeline interrupted by user")
+            print(f"\n\n⚠️ Pipeline interrupted by user. Exiting.")
             sys.exit(1)
         except Exception as e:
-            print(f"\n❌ Unexpected error: {e}")
+            print(f"\n\n❌ An unexpected error occurred in the pipeline: {e}")
             sys.exit(1)
