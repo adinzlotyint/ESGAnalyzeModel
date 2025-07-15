@@ -4,149 +4,178 @@ import re
 import os
 from pathlib import Path
 
-def load_config():
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    config_path = os.path.join(project_root, "config.json")
+def load_config() -> dict:
+    """
+    Loads the main project configuration from the root directory.
 
+    Returns:
+        dict: The project configuration.
+    """
+    project_root = Path(__file__).parent.parent
+    config_path = project_root / "config.json"
     with open(config_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-def convert_csv_format(input_file, output_file):
-    # Konwertuj format CSV: zamień przecinki na kropki, średniki na przecinki
-    print(f"📝 Konwertowanie formatu CSV: {input_file} -> {output_file}")
-    
-    with open(input_file, "r", encoding="utf-8") as f:
+def convert_csv_format(input_path: str, output_path: str):
+    """
+    Standardizes a CSV file by replacing decimal commas with dots and
+    semicolon separators with commas.
+
+    Args:
+        input_path (str): Path to the source CSV file.
+        output_path (str): Path to save the converted CSV file.
+    """
+    print(f"🔄 Standardizing CSV format: {input_path} -> {output_path}")
+    with open(input_path, "r", encoding="utf-8") as f:
         content = f.read()
 
     content = content.replace(",", ".")
     content = content.replace(";", ",")
 
-    with open(output_file, "w", encoding="utf-8") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         f.write(content)
-    
-    print(f"✅ Konwersja CSV zakończona: {output_file}")
+    print("✅ CSV format standardized.")
 
-def clean_text_jsonl(input_path, output_path):
-    # Czyszczenie tekstu w pliku JSONL przy użyciu wyrażeń regularnych
-    print(f"🧹 Czyszczenie tekstu w JSONL: {input_path} -> {output_path}")
+def clean_jsonl_text(input_path: str, output_path: str):
+    """
+    Cleans text content within a JSONL file using predefined regex patterns
+    to remove common text extraction artifacts.
+
+    Args:
+        input_path (str): Path to the source JSONL file.
+        output_path (str): Path to save the cleaned JSONL file.
+    """
+    print(f"🧹 Cleaning text in JSONL: {input_path} -> {output_path}")
     
     RE_DOTS = re.compile(r"\.{2,}")
     RE_SPACED_DOTS = re.compile(r"(?:\.\s*){2,}")
-    RE_ERROR = re.compile(r"This page contains the following errors: error on line.{0,10}at column.{0,10}: Extra content at the end of the document Below is a rendering of the page up to the first error.")
-
+    RE_XML_ERROR = re.compile(r"This page contains the following errors:.*?Below is a rendering of the page up to the first error\.", re.DOTALL)
+    
     processed_count = 0
     with open(input_path, "r", encoding="utf-8") as fin, \
          open(output_path, "w", encoding="utf-8") as fout:
-
+        
         for line in fin:
             if not line.strip():
                 continue
 
-            obj = json.loads(line)
-
-            if "text" in obj:
-                text = obj["text"]
+            record = json.loads(line)
+            if "text" in record and isinstance(record["text"], str):
+                text = record["text"]
                 text = RE_DOTS.sub(".", text)
                 text = RE_SPACED_DOTS.sub(". ", text)
-                text = RE_ERROR.sub("", text)
-                text = text.replace("", "")
-                text = text.replace("", "")
-                obj["text"] = text.strip()
-                processed_count += 1
+                text = RE_XML_ERROR.sub("", text)
+                record["text"] = text.strip()
+            
+            fout.write(json.dumps(record, ensure_ascii=False) + "\n")
+            processed_count += 1
+            
+    print(f"✅ Text cleaning complete. Processed {processed_count} records.")
 
-            fout.write(json.dumps(obj, ensure_ascii=False) + "\n")
-    
-    print(f"✅ Czyszczenie zakończone: przetworzono {processed_count} rekordów")
+def merge_data(jsonl_path: str, csv_path: str, output_path: str, num_labels: int):
+    """
+    Merges text data from a JSONL file with labels from a CSV file,
+    matching records based on a report name identifier.
 
-def merge_jsonl_with_csv(jsonl_path, csv_path, output_path, num_labels=12):
-    # Połącz dane z JSONL z etykietami z pliku CSV
-    print(f"🔗 Łączenie JSONL z etykietami z CSV: {jsonl_path} + {csv_path} -> {output_path}")
+    Args:
+        jsonl_path (str): Path to the cleaned JSONL file with texts.
+        csv_path (str): Path to the standardized CSV file with labels.
+        output_path (str): Path to save the merged JSONL file.
+        num_labels (int): The expected number of labels per record.
+    """
+    print(f"🔗 Merging JSONL texts with CSV labels...")
     
     df = pd.read_csv(csv_path)
     df.columns = df.columns.str.strip()
     df["Raport"] = df["Raport"].str.strip()
     df = df.set_index("Raport")
     
-    print(f"📊 Wczytano CSV: {len(df)} rekordów, {len(df.columns)} kolumn z etykietami")
+    print(f"   - Loaded CSV with {len(df)} records and {len(df.columns)} label columns.")
 
     matched_count = 0
     missing_count = 0
     
-    with open(jsonl_path, encoding="utf-8") as f_in, \
+    with open(jsonl_path, "r", encoding="utf-8") as f_in, \
          open(output_path, "w", encoding="utf-8") as f_out:
         
         for line in f_in:
-            rec = json.loads(line)
-            report_name = rec.get("nazwa_raportu", "").strip()
+            record = json.loads(line)
+            report_name = record.get("nazwa_raportu", "").strip()
 
             if report_name in df.index:
                 labels = df.loc[report_name].tolist()
                 matched_count += 1
             else:
-                print(f"⚠️  Brak etykiet dla: {report_name}")
+                print(f"   ⚠️ Warning: No labels found for report '{report_name}'. Assigning zeros.")
                 labels = [0.0] * num_labels
                 missing_count += 1
+            
+            output_record = {"text": record.get("text", ""), "labels": labels}
+            f_out.write(json.dumps(output_record, ensure_ascii=False) + "\n")
 
-            f_out.write(json.dumps({
-                "text": rec.get("text", ""),
-                "labels": labels
-            }, ensure_ascii=False) + "\n")
+    print(f"✅ Merge complete. Matched: {matched_count}, Missing: {missing_count}.")
 
-    print(f"✅ Łączenie zakończone: dopasowano {matched_count}, brakujących {missing_count}")
+def finalize_labels(input_path: str, output_path: str):
+    """
+    Converts float labels in a JSONL file to integers, binarizing them
+    for multi-label classification.
 
-def convert_labels_to_int(input_path, output_path):
-    # Konwertuj etykiety z floatów na liczby całkowite
-    print(f"🔢 Konwertowanie etykiet na liczby całkowite: {input_path} -> {output_path}")
+    Args:
+        input_path (str): Path to the merged JSONL file with float labels.
+        output_path (str): Path to the final JSONL file with integer labels.
+    """
+    print(f"🔢 Finalizing labels (float to int): {input_path} -> {output_path}")
     
     converted_count = 0
-    with open(input_path, encoding="utf-8") as f_in, \
+    with open(input_path, "r", encoding="utf-8") as f_in, \
          open(output_path, "w", encoding="utf-8") as f_out:
         
         for line in f_in:
-            rec = json.loads(line)
-            rec["labels"] = [int(x) for x in rec.get("labels", [])]
+            record = json.loads(line)
+            if "labels" in record and isinstance(record["labels"], list):
+                record["labels"] = [int(x) for x in record["labels"]]
+            
+            f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
             converted_count += 1
-            f_out.write(json.dumps(rec, ensure_ascii=False) + "\n")
-
-    print(f"✅ Konwersja zakończona: przetworzono {converted_count} rekordów")
+            
+    print(f"✅ Label finalization complete. Converted {converted_count} records.")
 
 def main():
-    print("🚀 Rozpoczynanie procesu przetwarzania danych...")
-
+    # Executes the full data conversion and merging pipeline.
+    print("\n🚀 Starting data conversion and preparation process...")
     config = load_config()
     
     raw_csv_path = config["raw_csv_path"]
     raw_jsonl_path = config["raw_jsonl_path"]
-    
-    converted_csv_path = config["converted_csv_path"]
-    cleaned_jsonl_path = config["cleaned_jsonl_path"]
-    merged_data_path = config["merged_jsonl_path"]
-    
-    final_output_path = Path(config["final_jsonl"])
-    
+    final_output_path = config["final_jsonl"]
     num_labels = config["num_labels"]
     
-    print(f"📁 Pliki do przetworzenia:")
-    print(f"   Surowy CSV: {raw_csv_path}")
-    print(f"   Surowy JSONL: {raw_jsonl_path}")
-    print(f"   Wyjściowy zbiór danych: {final_output_path}")
-    print(f"   Liczba etykiet: {num_labels}")
+    proc_dir = Path(final_output_path).parent
+    proc_dir.mkdir(parents=True, exist_ok=True)
+    converted_csv_path = proc_dir / "expert_scores_standardized.csv"
+    cleaned_jsonl_path = proc_dir / "reports_texts_cleaned.jsonl"
+    merged_data_path = proc_dir / "data_merged.jsonl"
     
-    # Krok 1: Konwersja formatu CSV
-    convert_csv_format(raw_csv_path, converted_csv_path)
+    print(f"\n📋 Configuration:")
+    print(f"   - Raw CSV: {raw_csv_path}")
+    print(f"   - Raw JSONL: {raw_jsonl_path}")
+    print(f"   - Final Output: {final_output_path}")
+    print(f"   - Number of Labels: {num_labels}")
     
-    # Krok 2: Czyszczenie tekstów JSONL
-    clean_text_jsonl(raw_jsonl_path, cleaned_jsonl_path)
+    print("\n--- [Step 1/4] Standardizing CSV ---")
+    convert_csv_format(raw_csv_path, str(converted_csv_path))
     
-    # Krok 3: Łączenie danych JSONL z etykietami z CSV
-    merge_jsonl_with_csv(cleaned_jsonl_path, converted_csv_path, merged_data_path, num_labels)
+    print("\n--- [Step 2/4] Cleaning JSONL Text ---")
+    clean_jsonl_text(raw_jsonl_path, str(cleaned_jsonl_path))
     
-    # Krok 4: Konwersja etykiet do liczb całkowitych
-    convert_labels_to_int(merged_data_path, final_output_path)
+    print("\n--- [Step 3/4] Merging Texts and Labels ---")
+    merge_data(str(cleaned_jsonl_path), str(converted_csv_path), str(merged_data_path), num_labels)
     
-    print(f"🎉 Proces zakończony pomyślnie!")
-    print(f"📂 Zbiór danych gotowy w: {final_output_path}")
-    print(f"💡 Możesz teraz uruchomić hf_create_dataset.py, aby stworzyć zbiór HuggingFace")
+    print("\n--- [Step 4/4] Finalizing Labels ---")
+    finalize_labels(str(merged_data_path), final_output_path)
+    
+    print(f"\n🎉 Data preparation process completed successfully!")
+    print(f"📂 Final dataset is ready at: {final_output_path}")
 
 if __name__ == "__main__":
     main()
