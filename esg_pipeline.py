@@ -128,7 +128,7 @@ class ESGPipeline:
 
         return self._run_script("training/hf_create_dataset.py", "HuggingFace dataset creation")
 
-    def step_download_snapshot(self) -> bool:
+    def step_download_snapshot(self, force_clean: bool = False) -> bool:
         """Step 3: Download the model snapshot from Hugging Face Hub."""
         self._print_step_header(3, 4, "MODEL SNAPSHOT DOWNLOAD")
         print(f"📥 Model to download: {self.config.get('model_name')}")
