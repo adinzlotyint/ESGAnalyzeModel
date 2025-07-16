@@ -9,6 +9,7 @@ import mlflow
 import numpy as np
 import torch
 import torch.nn as nn
+from databricks.sdk import WorkspaceClient
 from datasets import load_from_disk, Dataset
 from sklearn.metrics import f1_score, accuracy_score
 from torch.utils.data import DataLoader
@@ -46,7 +47,7 @@ class ESGTrainer(Trainer):
         else:
             self.class_weights = None
 
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         labels = inputs.pop("labels")
         outputs = model(**inputs)
         logits = outputs.get("logits")
@@ -54,6 +55,17 @@ class ESGTrainer(Trainer):
         loss = loss_fct(logits, labels.float())
         return (loss, outputs) if return_outputs else loss
 
+def get_databricks_user_email() -> str:
+    try:
+        w = WorkspaceClient()
+        current_user = w.current_user.me() 
+        return current_user.user_name
+    except Exception as e:
+        print(f"⚠️  Could not automatically get Databricks user email: {e}")
+        print("    Falling back to a generic experiment path.")
+        return ''
+    
+    
 # --- Helper Functions ---
 def _load_config() -> dict:
     # Loads the main project configuration from the root directory.
@@ -156,10 +168,9 @@ def _setup_environment(config: dict) -> Tuple:
     dataset = load_from_disk(dataset_path)
     print(f"📊 Loaded tokenized dataset from: {dataset_path}")
 
-    # The TRUE number of labels is determined from the data, not the config.
-    num_labels = dataset["train"].features["labels"].feature.length
-    if num_labels != len(CRITERIA_NAMES):
-        print(f"⚠️ Warning: Mismatch between labels in data ({num_labels}) and defined criteria ({len(CRITERIA_NAMES)}).")
+    # The number of labels is determined from the defined criteria.
+    num_labels = len(CRITERIA_NAMES)
+    print(f"📊 Using {num_labels} labels for classification: {CRITERIA_NAMES}")
     
     model_config = LongformerConfig.from_pretrained(
         config["model_name"],
@@ -189,7 +200,16 @@ def main():
     config = _load_config()
     
     try:
-        mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+        user_email = get_databricks_user_email()
+        
+        if user_email:
+            experiment_path = f"/Users/{user_email}/{MLFLOW_EXPERIMENT_NAME}"
+        else:
+            experiment_path = f"/Shared/{MLFLOW_EXPERIMENT_NAME}"
+            
+        print(f"🔧 Setting MLflow experiment to: {experiment_path}")
+        mlflow.set_experiment(experiment_path)
+
         mlflow.start_run()
         mlflow.log_params(config.get("training_args", {}))
         mlflow.log_param("model_name", config["model_name"])
