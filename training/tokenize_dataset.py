@@ -2,6 +2,7 @@ import json
 import sys
 from pathlib import Path
 from datasets import (
+    Dataset,
     load_from_disk,
     concatenate_datasets,
     DatasetDict,
@@ -122,7 +123,7 @@ def reconstruct_splits(tokenized_dataset: 'Dataset') -> DatasetDict:
 
     # Remove the temporary metadata column
     for split_name in final_splits:
-        final_splits[split_name] = final_splits[split_name].remove_columns(["original_split", "doc_id"])
+         final_splits[split_name] = final_splits[split_name].remove_columns(["original_split"])
 
     print("✅ Splits reconstructed.")
     return final_splits
