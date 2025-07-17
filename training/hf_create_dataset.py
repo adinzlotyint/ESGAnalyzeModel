@@ -25,7 +25,7 @@ def load_config() -> dict:
 def load_and_split_data(jsonl_path: str) -> DatasetDict:
     """
     Loads data from a JSONL file and performs a stratified multi-label split
-    into train, validation, and test sets (80/10/10).
+    into train, validation, and test sets (70/15/15).
 
     Args:
         jsonl_path (str): The path to the final processed JSONL data file.
@@ -37,14 +37,14 @@ def load_and_split_data(jsonl_path: str) -> DatasetDict:
     dataset = load_dataset('json', data_files=jsonl_path, split='train')
     print(f"📊 Full dataset loaded with {len(dataset)} samples.")
 
-    print("🧬 Performing stratified multi-label split (80/10/10)...")
+    print("🧬 Performing stratified multi-label split (70/15/15)...")
     # We use indices as a dummy X for the splitter.
     indices = np.arange(len(dataset)).reshape(-1, 1)
     labels = np.array(dataset['labels'])
 
-    # First split: 80% train, 20% temporary (for validation and test)
+    # First split: 70% train, 30% temporary (for validation and test)
     train_idx, _, temp_idx, temp_labels = iterative_train_test_split(
-        indices, labels, test_size=0.2
+        indices, labels, test_size=0.3
     )
 
     # Second split: split the temporary set into 50% validation and 50% test
