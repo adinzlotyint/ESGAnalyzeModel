@@ -187,12 +187,100 @@ def _setup_environment(config: dict) -> Tuple:
     
     return dataset, model, training_args, class_weights, output_dir
 
-def _save_artifacts(trainer: Trainer, tokenizer: LongformerTokenizerFast, output_dir: Path):
+def _save_artifacts(trainer: Trainer, tokenizer: LongformerTokenizerFast, output_dir: Path, thresholds: np.ndarray):
     # Saves the final model and tokenizer.
     print(f"\n💾 Saving final model and tokenizer to: {output_dir}")
     trainer.save_model(str(output_dir))
     tokenizer.save_pretrained(str(output_dir))
+    json.dump(thresholds.tolist(), open(output_dir / "thresholds.json", "w"))
     print("✅ Artifacts saved successfully.")
+
+def aggregate_chunks_to_documents(predictions, labels, doc_ids):
+    """
+    Simple mean pooling aggregation of chunk predictions to document level.
+    
+    Args:
+        predictions: Array of chunk predictions (probabilities)
+        labels: Array of chunk labels 
+        doc_ids: Array of document IDs for each chunk
+        
+    Returns:
+        doc_predictions: Document-level predictions
+        doc_labels: Document-level true labels
+        unique_doc_ids: List of unique document IDs
+    """
+    import pandas as pd
+    
+    # Create dataframe for easy grouping
+    df = pd.DataFrame({
+        'doc_id': doc_ids,
+        'predictions': predictions.tolist(),
+        'labels': labels.tolist()
+    })
+    
+    # Group by document and take mean
+    doc_results = df.groupby('doc_id').agg({
+        'predictions': lambda x: np.mean(np.array(x.tolist()), axis=0),
+        'labels': lambda x: x.iloc[0]  # Labels are same for all chunks of same doc
+    }).reset_index()
+    
+    doc_predictions = np.array(doc_results['predictions'].tolist())
+    doc_labels = np.array(doc_results['labels'].tolist())
+    unique_doc_ids = doc_results['doc_id'].tolist()
+    
+    return doc_predictions, doc_labels, unique_doc_ids
+
+def evaluate_document_level(trainer: Trainer, dataset: Dataset, threshold: float = 0.5):
+    """
+    Evaluate model performance at document level using mean pooling.
+    
+    Args:
+        trainer: Trained model
+        dataset: Dataset with doc_id column
+        threshold: Classification threshold
+        
+    Returns:
+        Dictionary with document-level metrics
+    """
+    print("\n📊 Evaluating document-level performance...")
+    
+    # Get chunk predictions
+    preds = trainer.predict(dataset)
+    chunk_probs = 1 / (1 + np.exp(-preds.predictions))  # Sigmoid
+    chunk_labels = preds.label_ids
+    
+    # Aggregate to document level
+    doc_probs, doc_labels, doc_ids = aggregate_chunks_to_documents(
+        chunk_probs, chunk_labels, dataset['doc_id']
+    )
+    
+    # Apply threshold
+    doc_predictions = (doc_probs > threshold).astype(int)
+    
+    # Calculate metrics
+    from sklearn.metrics import f1_score, accuracy_score
+    
+    f1_macro = f1_score(doc_labels, doc_predictions, average='macro', zero_division=0)
+    accuracy = accuracy_score(doc_labels, doc_predictions)
+    
+    # Per-criterion F1
+    f1_per_criterion = f1_score(doc_labels, doc_predictions, average=None, zero_division=0)
+    
+    results = {
+        'doc_f1_macro': f1_macro,
+        'doc_accuracy': accuracy,
+        'num_documents': len(doc_ids)
+    }
+    
+    # Add per-criterion results
+    for i, criterion in enumerate(CRITERIA_NAMES):
+        results[f'doc_f1_{criterion}'] = f1_per_criterion[i]
+    
+    print(f"Document-level F1 (macro): {f1_macro:.4f}")
+    print(f"Document-level accuracy: {accuracy:.4f}")
+    print(f"Number of documents: {len(doc_ids)}")
+    
+    return results
 
 # --- Main Execution ---
 def main():
@@ -236,17 +324,29 @@ def main():
         # Post-training evaluation and logging
         optimal_thresholds = _optimize_thresholds(trainer, dataset['validation'])
         final_results = _evaluate_with_optimal_thresholds(trainer, dataset['test'], optimal_thresholds)
-        
+
+        # Add document-level evaluation
+        doc_results = evaluate_document_level(trainer, dataset['test'])
+
         # Log final metrics and thresholds to MLflow
         mlflow.log_metrics({f"optimal_threshold_{k}": v for k, v in zip(CRITERIA_NAMES, optimal_thresholds)})
         mlflow.log_metrics(final_results)
+        mlflow.log_metrics(doc_results)
 
         # Print final summary
         print("\n✨ FINAL TEST RESULTS (with optimized thresholds):")
         for key, value in final_results.items():
             print(f"   - {key}: {value:.4f}")
 
-        _save_artifacts(trainer, tokenizer, output_dir)
+        print("\n✨ CHUNK-LEVEL RESULTS:")
+        for key, value in final_results.items():
+            print(f"   - {key}: {value:.4f}")
+        
+        print("\n🏢 DOCUMENT-LEVEL RESULTS:")
+        for key, value in doc_results.items():
+            print(f"   - {key}: {value:.4f}")
+
+        _save_artifacts(trainer, tokenizer, output_dir, optimal_thresholds)
 
     except Exception as e:
         print(f"\n❌ An unexpected error occurred during the training pipeline: {e}")
