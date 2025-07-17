@@ -26,12 +26,12 @@ from transformers import (
 # --- Constants ---
 MLFLOW_EXPERIMENT_NAME = "ESGAnalyzeModel-Training"
 CRITERIA_NAMES = [
-    "Plan_Transformacji_Klimatycznej",
-    "Identyfikacja_i_Zarzadzanie_Ryzykami",
-    "Definicja_Granic_Konsolidacji",
-    "Raportowanie_Danych_Historycznych",
-    "Ujawnienie_Wskaznikow_Intensywnosci",
-    "Wiarygodnosc_Zdefiniowanych_Celow",
+    'c1_transition_plan',
+    'c2_risk_management',
+    'c4_boundaries',
+    'c6_historical_data',
+    'c7_intensity_metrics',
+    'c8_targets_credibility',
 ]
 
 # --- Custom Trainer for Weighted Loss ---
