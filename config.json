@@ -1,6 +1,6 @@
 {
   "model_name": "sdadas/polish-longformer-base-4096",
-  "num_labels": 7,
+  "num_labels": 6,
   "problem_type": "multi_label_classification",
   "class_weight_method": "balanced",
 
@@ -30,7 +30,7 @@
     "per_device_eval_batch_size": 1,
     "gradient_accumulation_steps": 8,
 
-    "num_train_epochs": 10,
+    "num_train_epochs": 8,
     "weight_decay": 0.01,
     "max_grad_norm": 1.0,
     "lr_scheduler_type": "linear",
