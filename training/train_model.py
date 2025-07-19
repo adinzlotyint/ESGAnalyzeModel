@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 from databricks.sdk import WorkspaceClient
 from datasets import load_from_disk, Dataset
-from sklearn.metrics import f1_score, accuracy_score
+from sklearn.metrics import f1_score, accuracy_score, jaccard_score, hamming_loss
 from torch.utils.data import DataLoader
 from transformers import (
     LongformerForSequenceClassification,
@@ -56,14 +56,11 @@ class ESGTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
 def get_databricks_user_email() -> str:
-    try:
-        w = WorkspaceClient()
-        current_user = w.current_user.me() 
-        return current_user.user_name
-    except Exception as e:
-        print(f"⚠️  Could not automatically get Databricks user email: {e}")
-        print("    Falling back to a generic experiment path.")
-        return ''
+    print("Attempting to connect to Databricks to get user email...")
+    w = WorkspaceClient()
+    current_user = w.current_user.me() 
+    print(f"✅ Successfully connected and found user: {current_user.user_name}")
+    return current_user.user_name
     
     
 # --- Helper Functions ---
@@ -96,19 +93,32 @@ def _calculate_class_weights(dataset: Dataset) -> torch.Tensor:
     return torch.tensor(weights, dtype=torch.float)
 
 def _compute_metrics(p: EvalPrediction) -> Dict[str, float]:
-    # Computes metrics during evaluation using a simple 0.5 threshold.
+    """
+    Computes a comprehensive set of multi-label metrics during evaluation.
+    Uses a standard 0.5 threshold.
+    """
     logits, labels = p
     probs = 1 / (1 + np.exp(-logits))  # Sigmoid
     preds = (probs > 0.5).astype(int)
-    
+
+    # Obliczenie kluczowych metryk
     f1_macro = f1_score(labels, preds, average='macro', zero_division=0)
-    accuracy = accuracy_score(labels, preds)
-    
-    metrics = {'f1_macro': f1_macro, 'accuracy': accuracy}
+    exact_match_ratio = accuracy_score(labels, preds)
+    jaccard_macro = jaccard_score(labels, preds, average='macro', zero_division=0)
+    h_loss = hamming_loss(labels, preds)
+
+    metrics = {
+        'f1_macro': f1_macro,
+        'exact_match_ratio': exact_match_ratio,
+        'jaccard_macro': jaccard_macro,
+        'hamming_loss': h_loss
+    }
+
+    # Dodanie F1-score dla każdej etykiety indywidualnie
     f1_per_label = f1_score(labels, preds, average=None, zero_division=0)
     for i, f1 in enumerate(f1_per_label):
         metrics[f'f1_{CRITERIA_NAMES[i]}'] = f1
-        
+
     return metrics
 
 def _optimize_thresholds(trainer: Trainer, eval_dataset: Dataset) -> np.ndarray:
@@ -143,13 +153,21 @@ def _evaluate_with_optimal_thresholds(trainer: Trainer, test_dataset: Dataset, t
         y_pred_optimal[:, i] = (y_probs[:, i] >= thresholds[i]).astype(int)
         
     f1_macro = f1_score(y_true, y_pred_optimal, average='macro', zero_division=0)
-    accuracy = accuracy_score(y_true, y_pred_optimal)
+    exact_match_ratio = accuracy_score(y_true, y_pred_optimal)
+    jaccard_macro = jaccard_score(y_true, y_pred_optimal, average='macro', zero_division=0)
+    h_loss = hamming_loss(y_true, y_pred_optimal)
     
-    results = {'final_test_f1_macro': f1_macro, 'final_test_accuracy': accuracy}
+    results = {
+        'final_test_f1_macro': f1_macro,
+        'final_test_exact_match_ratio': exact_match_ratio,
+        'final_test_jaccard_macro': jaccard_macro,
+        'final_test_hamming_loss': h_loss
+    }
+
     f1_per_label = f1_score(y_true, y_pred_optimal, average=None, zero_division=0)
     for i, f1 in enumerate(f1_per_label):
         results[f'final_test_f1_{CRITERIA_NAMES[i]}'] = f1
-        
+
     return results
 
 def _setup_environment(config: dict) -> Tuple:
@@ -230,23 +248,15 @@ def aggregate_chunks_to_documents(predictions, labels, doc_ids):
     
     return doc_predictions, doc_labels, unique_doc_ids
 
-def evaluate_document_level(trainer: Trainer, dataset: Dataset, threshold: float = 0.5):
+def evaluate_document_level(trainer: Trainer, dataset: Dataset, thresholds: np.ndarray) -> Dict[str, float]:
     """
-    Evaluate model performance at document level using mean pooling.
-    
-    Args:
-        trainer: Trained model
-        dataset: Dataset with doc_id column
-        threshold: Classification threshold
-        
-    Returns:
-        Dictionary with document-level metrics
+    Evaluate model performance at document level using mean pooling and optimized thresholds.
     """
     print("\n📊 Evaluating document-level performance...")
     
     # Get chunk predictions
     preds = trainer.predict(dataset)
-    chunk_probs = 1 / (1 + np.exp(-preds.predictions))  # Sigmoid
+    chunk_probs = 1 / (1 + np.exp(-preds.predictions))
     chunk_labels = preds.label_ids
     
     # Aggregate to document level
@@ -255,98 +265,110 @@ def evaluate_document_level(trainer: Trainer, dataset: Dataset, threshold: float
     )
     
     # Apply threshold
-    doc_predictions = (doc_probs > threshold).astype(int)
+    doc_predictions = np.zeros_like(doc_probs)
+    for i in range(doc_labels.shape[1]):
+        doc_predictions[:, i] = (doc_probs[:, i] >= thresholds[i]).astype(int)
     
     # Calculate metrics
-    from sklearn.metrics import f1_score, accuracy_score
-    
     f1_macro = f1_score(doc_labels, doc_predictions, average='macro', zero_division=0)
-    accuracy = accuracy_score(doc_labels, doc_predictions)
-    
-    # Per-criterion F1
-    f1_per_criterion = f1_score(doc_labels, doc_predictions, average=None, zero_division=0)
+    exact_match_ratio = accuracy_score(doc_labels, doc_predictions)
+    jaccard_macro = jaccard_score(doc_labels, doc_predictions, average='macro', zero_division=0)
+    h_loss = hamming_loss(doc_labels, doc_predictions)
     
     results = {
         'doc_f1_macro': f1_macro,
-        'doc_accuracy': accuracy,
+        'doc_exact_match_ratio': exact_match_ratio,
+        'doc_jaccard_macro': jaccard_macro,
+        'doc_hamming_loss': h_loss,
         'num_documents': len(doc_ids)
     }
-    
-    # Add per-criterion results
+
+    # Add per-criterion F1
+    f1_per_criterion = f1_score(doc_labels, doc_predictions, average=None, zero_division=0)
     for i, criterion in enumerate(CRITERIA_NAMES):
         results[f'doc_f1_{criterion}'] = f1_per_criterion[i]
-    
+
     print(f"Document-level F1 (macro): {f1_macro:.4f}")
-    print(f"Document-level accuracy: {accuracy:.4f}")
+    print(f"Document-level Exact Match Ratio: {exact_match_ratio:.4f}")
     print(f"Number of documents: {len(doc_ids)}")
-    
+
     return results
 
 # --- Main Execution ---
 def main():
-    # Main function to run the complete model training and evaluation pipeline.
+    """
+    Main function to run the complete model training and evaluation pipeline.
+    """
     config = _load_config()
-    
+
     try:
-        user_email = get_databricks_user_email()
-        
-        if user_email:
+        try:
+            user_email = get_databricks_user_email()
             experiment_path = f"/Users/{user_email}/{MLFLOW_EXPERIMENT_NAME}"
-        else:
-            experiment_path = f"/Shared/{MLFLOW_EXPERIMENT_NAME}"
-            
+        except Exception as e:
+            print(f"\n❌ Critical error: Could not configure MLflow experiment path due to connection issue: {e}")
+            print("Please check your Databricks token and host configuration. Aborting.")
+            sys.exit(1)
+        
         print(f"🔧 Setting MLflow experiment to: {experiment_path}")
         mlflow.set_experiment(experiment_path)
 
-        mlflow.start_run()
-        mlflow.log_params(config.get("training_args", {}))
-        mlflow.log_param("model_name", config["model_name"])
+        with mlflow.start_run() as run:
+            print(f"🚀 MLflow run started (ID: {run.info.run_id})")
+            mlflow.log_params(config.get("training_args", {}))
+            mlflow.log_param("model_name", config["model_name"])
 
-        dataset, model, training_args, class_weights, output_dir = _setup_environment(config)
-        
-        tokenizer = LongformerTokenizerFast.from_pretrained(config["model_name"])
+            dataset, model, training_args, class_weights, output_dir = _setup_environment(config)
+            
+            # Check for doc_id column for document-level evaluation.
+            if 'doc_id' not in dataset['validation'].features or 'doc_id' not in dataset['test'].features:
+                print("⚠️  'doc_id' not found in validation/test sets. Document-level evaluation will be skipped.")
+                evaluate_docs = False
+            else:
+                evaluate_docs = True
 
-        trainer = ESGTrainer(
-            model=model,
-            args=training_args,
-            train_dataset=dataset["train"],
-            eval_dataset=dataset["validation"],
-            data_collator=default_data_collator,
-            compute_metrics=_compute_metrics,
-            tokenizer=tokenizer,
-            class_weights=class_weights,
-        )
+            tokenizer = LongformerTokenizerFast.from_pretrained(config["model_name"])
 
-        print("\n🏃 Starting model training...")
-        trainer.train()
-        print("✅ Training finished.")
+            trainer = ESGTrainer(
+                model=model,
+                args=training_args,
+                train_dataset=dataset["train"],
+                eval_dataset=dataset["validation"],
+                data_collator=default_data_collator,
+                compute_metrics=_compute_metrics,
+                tokenizer=tokenizer,
+                class_weights=class_weights,
+            )
 
-        # Post-training evaluation and logging
-        optimal_thresholds = _optimize_thresholds(trainer, dataset['validation'])
-        final_results = _evaluate_with_optimal_thresholds(trainer, dataset['test'], optimal_thresholds)
+            print("\n🏃 Starting model training...")
+            trainer.train()
+            print("✅ Training finished.")
 
-        # Add document-level evaluation
-        doc_results = evaluate_document_level(trainer, dataset['test'])
+            # Perform chunk-level evaluation
+            optimal_thresholds = _optimize_thresholds(trainer, dataset['validation'])
+            chunk_results = _evaluate_with_optimal_thresholds(trainer, dataset['test'], optimal_thresholds)
 
-        # Log final metrics and thresholds to MLflow
-        mlflow.log_metrics({f"optimal_threshold_{k}": v for k, v in zip(CRITERIA_NAMES, optimal_thresholds)})
-        mlflow.log_metrics(final_results)
-        mlflow.log_metrics(doc_results)
+            # Log metrics and thresholds to MLflow
+            mlflow.log_metrics({f"optimal_threshold_{k}": v for k, v in zip(CRITERIA_NAMES, optimal_thresholds)})
+            mlflow.log_metrics({f"chunk_{k}": v for k, v in chunk_results.items()})
 
-        # Print final summary
-        print("\n✨ FINAL TEST RESULTS (with optimized thresholds):")
-        for key, value in final_results.items():
-            print(f"   - {key}: {value:.4f}")
+            # UPDATED SUMMARY
+            print("\n✨ FINAL CHUNK-LEVEL RESULTS (with optimized thresholds):")
+            for key, value in chunk_results.items():
+                print(f"   - {key.replace('final_test_', '')}: {value:.4f}")
 
-        print("\n✨ CHUNK-LEVEL RESULTS:")
-        for key, value in final_results.items():
-            print(f"   - {key}: {value:.4f}")
-        
-        print("\n🏢 DOCUMENT-LEVEL RESULTS:")
-        for key, value in doc_results.items():
-            print(f"   - {key}: {value:.4f}")
+            # Perform document-level evaluation
+            if evaluate_docs:
+                doc_results = evaluate_document_level(trainer, dataset['test'], optimal_thresholds)
+                mlflow.log_metrics(doc_results)
+                
+                # UPDATED SUMMARY
+                print("\n🏢 FINAL DOCUMENT-LEVEL RESULTS (with optimized thresholds):")
+                for key, value in doc_results.items():
+                    print(f"   - {key}: {value:.4f}")
 
-        _save_artifacts(trainer, tokenizer, output_dir, optimal_thresholds)
+            _save_artifacts(trainer, tokenizer, output_dir, optimal_thresholds)
+            mlflow.log_artifacts(str(output_dir), artifact_path="model")
 
     except Exception as e:
         print(f"\n❌ An unexpected error occurred during the training pipeline: {e}")
