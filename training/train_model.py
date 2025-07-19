@@ -236,9 +236,9 @@ def aggregate_chunks_to_documents(predictions, labels, doc_ids):
         'labels': labels.tolist()
     })
     
-    # Group by document and take mean
+    # Group by document and take max
     doc_results = df.groupby('doc_id').agg({
-        'predictions': lambda x: np.mean(np.array(x.tolist()), axis=0),
+        'predictions': lambda x: np.max(np.array(x.tolist()), axis=0),
         'labels': lambda x: x.iloc[0]  # Labels are same for all chunks of same doc
     }).reset_index()
     
