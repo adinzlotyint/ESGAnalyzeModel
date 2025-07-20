@@ -317,6 +317,7 @@ def main():
             print(f"🚀 MLflow run started (ID: {run.info.run_id})")
             mlflow.log_params(config.get("training_args", {}))
             mlflow.log_param("model_name", config["model_name"])
+            mlflow.log_param("results_aggregation_method", "Max pooling")
 
             dataset, model, training_args, class_weights, output_dir = _setup_environment(config)
             
