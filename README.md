@@ -1,6 +1,6 @@
 This repository contains a complete and reproducible pipeline created for a master's thesis research project. Its purpose was to train and evaluate a multi-label classification model capable of analyzing Polish corporate sustainability reports based on selected ESRS standards.
 
-**Note:** This repository documents the model training process. The final, trained model is deployed in a separate project (`ESGAnalyzeAPI`), which serves it via an API for inference. Due to data confidentiality, the raw reports and expert annotations are not included in this repository.
+**Note:** This repository documents the model training process. The final, trained model is deployed in a separate project (`ESGAnalyze`: https://github.com/adinzlotyint/ESGAnalyze), which serves it via an API for inference. Due to data confidentiality, the raw reports and expert annotations are not included in this repository.
 
 ## Project Overview
 
